@@ -1,0 +1,478 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1280</width>
+    <height>820</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Analog Filter Design Toolbox</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QHBoxLayout" name="mainHLayout">
+    <property name="spacing">
+     <number>0</number>
+    </property>
+    <property name="leftMargin"><number>0</number></property>
+    <property name="topMargin"><number>0</number></property>
+    <property name="rightMargin"><number>0</number></property>
+    <property name="bottomMargin"><number>0</number></property>
+
+    <!-- ============================================================ -->
+    <!--  LEFT PANEL  (fixed 320 px)                                  -->
+    <!-- ============================================================ -->
+    <item>
+     <widget class="QWidget" name="leftPanel">
+      <property name="minimumWidth"><number>360</number></property>
+      <property name="maximumWidth"><number>360</number></property>
+      <layout class="QVBoxLayout" name="leftVLayout">
+       <property name="leftMargin"><number>12</number></property>
+       <property name="topMargin"><number>12</number></property>
+       <property name="rightMargin"><number>12</number></property>
+       <property name="bottomMargin"><number>12</number></property>
+       <property name="spacing"><number>10</number></property>
+
+       <!-- Title -->
+       <item>
+        <widget class="QLabel" name="lblTitle">
+         <property name="text"><string>Filter Design Toolbox</string></property>
+         <property name="alignment"><set>AlignHCenter</set></property>
+        </widget>
+       </item>
+
+       <!-- ── Approximation & Type ── -->
+       <item>
+        <widget class="QGroupBox" name="gbApprox">
+         <property name="title"><string>Approximation &amp; Type</string></property>
+         <layout class="QFormLayout" name="formApprox">
+          <item row="0" column="0">
+           <widget class="QLabel" name="lblApprox"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Approximation</string></property></widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QComboBox" name="cbApproximation">
+            <item><property name="text"><string>Butterworth</string></property></item>
+            <item><property name="text"><string>Chebyshev I</string></property></item>
+            <item><property name="text"><string>Chebyshev II</string></property></item>
+            <item><property name="text"><string>Elliptic (Cauer)</string></property></item>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="lblType"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Filter Type</string></property></widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QComboBox" name="cbFilterType">
+            <item><property name="text"><string>Low-pass</string></property></item>
+            <item><property name="text"><string>High-pass</string></property></item>
+            <item><property name="text"><string>Band-pass</string></property></item>
+            <item><property name="text"><string>Band-stop (Notch)</string></property></item>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+
+       <!-- ── Relative Specifications ── -->
+       <item>
+        <widget class="QGroupBox" name="gbSpecs">
+         <property name="title"><string>Filter Specifications</string></property>
+         <layout class="QFormLayout" name="formSpecs">
+
+          <!-- LP / HP : one passband edge -->
+          <item row="0" column="0">
+           <widget class="QLabel" name="lblFp"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Passband edge fp (Hz)</string></property></widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QDoubleSpinBox" name="sbFp">
+            <property name="minimum"><double>0.001</double></property>
+            <property name="maximum"><double>10000000.0</double></property>
+            <property name="value"><double>1000.0</double></property>
+            <property name="decimals"><number>2</number></property>
+            <property name="singleStep"><double>100.0</double></property>
+           </widget>
+          </item>
+
+          <!-- LP / HP : one stopband edge -->
+          <item row="1" column="0">
+           <widget class="QLabel" name="lblFs"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Stopband edge fs (Hz)</string></property></widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QDoubleSpinBox" name="sbFs">
+            <property name="minimum"><double>0.001</double></property>
+            <property name="maximum"><double>10000000.0</double></property>
+            <property name="value"><double>2000.0</double></property>
+            <property name="decimals"><number>2</number></property>
+            <property name="singleStep"><double>100.0</double></property>
+           </widget>
+          </item>
+
+          <!-- BP / BS : lower passband edge (hidden for LP/HP) -->
+          <item row="2" column="0">
+           <widget class="QLabel" name="lblFp2"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Passband edge fp2 (Hz)</string></property></widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QDoubleSpinBox" name="sbFp2">
+            <property name="minimum"><double>0.001</double></property>
+            <property name="maximum"><double>10000000.0</double></property>
+            <property name="value"><double>3000.0</double></property>
+            <property name="decimals"><number>2</number></property>
+            <property name="singleStep"><double>100.0</double></property>
+            <property name="enabled"><bool>false</bool></property>
+           </widget>
+          </item>
+
+          <!-- BP / BS : upper stopband edge (hidden for LP/HP) -->
+          <item row="3" column="0">
+           <widget class="QLabel" name="lblFs2"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Stopband edge fs2 (Hz)</string></property></widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QDoubleSpinBox" name="sbFs2">
+            <property name="minimum"><double>0.001</double></property>
+            <property name="maximum"><double>10000000.0</double></property>
+            <property name="value"><double>4000.0</double></property>
+            <property name="decimals"><number>2</number></property>
+            <property name="singleStep"><double>100.0</double></property>
+            <property name="enabled"><bool>false</bool></property>
+           </widget>
+          </item>
+
+          <!-- Passband attenuation -->
+          <item row="4" column="0">
+           <widget class="QLabel" name="lblAp"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Max passband loss Ap (dB)</string></property></widget>
+          </item>
+          <item row="4" column="1">
+           <widget class="QDoubleSpinBox" name="sbAp">
+            <property name="minimum"><double>0.001</double></property>
+            <property name="maximum"><double>60.0</double></property>
+            <property name="value"><double>3.0</double></property>
+            <property name="decimals"><number>2</number></property>
+           </widget>
+          </item>
+
+          <!-- Stopband attenuation -->
+          <item row="5" column="0">
+           <widget class="QLabel" name="lblAs"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Min stopband loss As (dB)</string></property></widget>
+          </item>
+          <item row="5" column="1">
+           <widget class="QDoubleSpinBox" name="sbAs">
+            <property name="minimum"><double>1.0</double></property>
+            <property name="maximum"><double>120.0</double></property>
+            <property name="value"><double>40.0</double></property>
+            <property name="decimals"><number>2</number></property>
+           </widget>
+          </item>
+
+          <!-- Computed order (read-only, filled after design) -->
+          <item row="6" column="0">
+           <widget class="QLabel" name="lblOrderLabel"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Computed order n</string></property></widget>
+          </item>
+          <item row="6" column="1">
+           <widget class="QLabel" name="lblComputedOrder">
+            <property name="text"><string>—</string></property>
+            <property name="alignment"><set>AlignRight|AlignVCenter</set></property>
+           </widget>
+          </item>
+
+         </layout>
+        </widget>
+       </item>
+
+       <!-- ── Implementation ── -->
+       <item>
+        <widget class="QGroupBox" name="gbImpl">
+         <property name="title"><string>Implementation</string></property>
+         <layout class="QFormLayout" name="formImpl">
+
+          <item row="0" column="0">
+           <widget class="QLabel" name="lblImpl"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Topology</string></property></widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QComboBox" name="cbImplementation">
+            <item><property name="text"><string>Sallen-Key</string></property></item>
+            <item><property name="text"><string>Tow-Thomas (UAF42)</string></property></item>
+            <item><property name="text"><string>Deliyannis-Friend</string></property></item>
+           </widget>
+          </item>
+
+          <item row="1" column="0">
+           <widget class="QLabel" name="lblIcModel"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>IC / Op-Amp Model</string></property></widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QComboBox" name="cbIcModel">
+            <item><property name="text"><string>Ideal</string></property></item>
+            <item><property name="text"><string>TL071</string></property></item>
+            <item><property name="text"><string>LM741</string></property></item>
+            <item><property name="text"><string>TL082</string></property></item>
+            <item><property name="text"><string>UAF42 (Burr-Brown)</string></property></item>
+            <item><property name="text"><string>Custom SPICE…</string></property></item>
+           </widget>
+          </item>
+
+         </layout>
+        </widget>
+       </item>
+
+       <!-- ── Passive Components ── -->
+       <item>
+        <widget class="QGroupBox" name="gbPassive">
+         <property name="title"><string>Passive Component Preferences</string></property>
+         <layout class="QFormLayout" name="formPassive">
+
+          <item row="0" column="0">
+           <widget class="QLabel" name="lblRSeries"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Resistor Series (E-series)</string></property></widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QComboBox" name="cbRSeries">
+            <item><property name="text"><string>E6</string></property></item>
+            <item><property name="text"><string>E12</string></property></item>
+            <item><property name="text"><string>E24</string></property></item>
+            <item><property name="text"><string>E48</string></property></item>
+            <item><property name="text"><string>E96</string></property></item>
+            <item><property name="text"><string>Exact (no rounding)</string></property></item>
+           </widget>
+          </item>
+
+          <item row="1" column="0">
+           <widget class="QLabel" name="lblCSeries"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Capacitor Series</string></property></widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QComboBox" name="cbCSeries">
+            <item><property name="text"><string>E6</string></property></item>
+            <item><property name="text"><string>E12</string></property></item>
+            <item><property name="text"><string>E24</string></property></item>
+            <item><property name="text"><string>Exact (no rounding)</string></property></item>
+           </widget>
+          </item>
+
+          <item row="2" column="0">
+           <widget class="QLabel" name="lblRBase"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Base Resistor (Ω)</string></property></widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QDoubleSpinBox" name="sbRBase">
+            <property name="minimum"><double>100.0</double></property>
+            <property name="maximum"><double>10000000.0</double></property>
+            <property name="value"><double>10000.0</double></property>
+            <property name="decimals"><number>0</number></property>
+            <property name="singleStep"><double>1000.0</double></property>
+           </widget>
+          </item>
+
+          <item row="3" column="0">
+           <widget class="QLabel" name="lblCBase"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Base Capacitor (F)</string></property></widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QDoubleSpinBox" name="sbCBase">
+            <property name="minimum"><double>1e-12</double></property>
+            <property name="maximum"><double>0.001</double></property>
+            <property name="value"><double>1e-08</double></property>
+            <property name="decimals"><number>12</number></property>
+            <property name="singleStep"><double>1e-09</double></property>
+           </widget>
+          </item>
+
+         </layout>
+        </widget>
+       </item>
+
+       <item>
+        <spacer name="verticalSpacer">
+         <property name="orientation"><enum>Qt::Vertical</enum></property>
+         <property name="sizeType"><enum>QSizePolicy::Expanding</enum></property>
+         <property name="sizeHint" stdset="0">
+          <size><width>20</width><height>40</height></size>
+         </property>
+        </spacer>
+       </item>
+
+      </layout>
+     </widget>
+    </item>
+
+    <!-- ============================================================ -->
+    <!--  RIGHT PANEL  (stretches)                                    -->
+    <!-- ============================================================ -->
+    <item>
+     <widget class="QWidget" name="rightPanel">
+      <layout class="QVBoxLayout" name="rightVLayout">
+       <property name="leftMargin"><number>12</number></property>
+       <property name="topMargin"><number>12</number></property>
+       <property name="rightMargin"><number>12</number></property>
+       <property name="bottomMargin"><number>12</number></property>
+       <property name="spacing"><number>8</number></property>
+
+       <!-- Action buttons row -->
+       <item>
+        <layout class="QHBoxLayout" name="btnLayout">
+         <item>
+          <widget class="QPushButton" name="btnDesign">
+           <property name="text"><string>Design Filter</string></property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnSimulate">
+           <property name="text"><string>Run SPICE Simulation</string></property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnExportNetlist">
+           <property name="text"><string>Export Netlist</string></property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnExportReport">
+           <property name="text"><string>Export Report</string></property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="horizontalSpacer">
+           <property name="orientation"><enum>Qt::Horizontal</enum></property>
+           <property name="sizeType"><enum>QSizePolicy::Expanding</enum></property>
+           <property name="sizeHint" stdset="0">
+            <size><width>40</width><height>20</height></size>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnToggleTheme">
+           <property name="text"><string>☀ Light / Dark</string></property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+
+       <!-- Plot tabs  (default: tab 0 = Magnitude) -->
+       <item>
+        <widget class="QTabWidget" name="tabPlots">
+         <property name="currentIndex"><number>0</number></property>
+
+         <!-- Magnitude -->
+         <widget class="QWidget" name="tabMagnitude">
+          <attribute name="title"><string>Magnitude Response</string></attribute>
+          <layout class="QVBoxLayout" name="layoutMag">
+           <item>
+            <widget class="QWidget" name="wgtMagnitudePlot" >
+             <!-- PlotWidget (pyqtgraph) is promoted here -->
+            </widget>
+           </item>
+          </layout>
+         </widget>
+
+         <!-- Phase -->
+         <widget class="QWidget" name="tabPhase">
+          <attribute name="title"><string>Phase Response</string></attribute>
+          <layout class="QVBoxLayout" name="layoutPhase">
+           <item>
+            <widget class="QWidget" name="wgtPhasePlot">
+            </widget>
+           </item>
+          </layout>
+         </widget>
+
+         <!-- Group Delay -->
+         <widget class="QWidget" name="tabGroupDelay">
+          <attribute name="title"><string>Group Delay</string></attribute>
+          <layout class="QVBoxLayout" name="layoutGD">
+           <item>
+            <widget class="QWidget" name="wgtGroupDelayPlot">
+            </widget>
+           </item>
+          </layout>
+         </widget>
+
+         <!-- Pole-Zero -->
+         <widget class="QWidget" name="tabPoleZero">
+          <attribute name="title"><string>Pole-Zero Map</string></attribute>
+          <layout class="QVBoxLayout" name="layoutPZ">
+           <item>
+            <widget class="QWidget" name="wgtPoleZeroPlot">
+            </widget>
+           </item>
+          </layout>
+         </widget>
+
+         <!-- Schematic -->
+         <widget class="QWidget" name="tabSchematic">
+          <attribute name="title"><string>Circuit Schematic</string></attribute>
+          <layout class="QVBoxLayout" name="layoutSch">
+           <item>
+            <widget class="QLabel" name="lblSchematic">
+             <property name="text"><string>Schematic will be rendered here after design.</string></property>
+             <property name="alignment"><set>AlignCenter</set></property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+
+        </widget>
+       </item>
+
+       <!-- Component Table -->
+       <item>
+        <widget class="QGroupBox" name="gbComponents">
+         <property name="title"><string>Computed Component Values</string></property>
+         <property name="maximumHeight"><number>200</number></property>
+         <layout class="QVBoxLayout" name="layoutComp">
+          <item>
+           <widget class="QTableWidget" name="tblComponents">
+            <property name="columnCount"><number>5</number></property>
+            <attribute name="horizontalHeaderItem" column="0">
+             <item><property name="text"><string>Stage</string></property></item>
+            </attribute>
+            <attribute name="horizontalHeaderItem" column="1">
+             <item><property name="text"><string>Component</string></property></item>
+            </attribute>
+            <attribute name="horizontalHeaderItem" column="2">
+             <item><property name="text"><string>Ideal Value</string></property></item>
+            </attribute>
+            <attribute name="horizontalHeaderItem" column="3">
+             <item><property name="text"><string>Rounded (E-series)</string></property></item>
+            </attribute>
+            <attribute name="horizontalHeaderItem" column="4">
+             <item><property name="text"><string>Error (%)</string></property></item>
+            </attribute>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+
+       <!-- Status bar simulation -->
+       <item>
+        <widget class="QLabel" name="lblStatus">
+         <property name="text"><string>Ready.</string></property>
+        </widget>
+       </item>
+
+      </layout>
+     </widget>
+    </item>
+
+   </layout>
+  </widget>
+
+  <!-- Actions -->
+   <action name="actionNew"><property name="text"><string>New</string></property></action>
+   <action name="actionOpen"><property name="text"><string>Open…</string></property></action>
+   <action name="actionSave"><property name="text"><string>Save</string></property></action>
+   <action name="actionExportNetlist"><property name="text"><string>Export SPICE Netlist…</string></property></action>
+   <action name="actionExportReport"><property name="text"><string>Export PDF Report…</string></property></action>
+   <action name="actionQuit"><property name="text"><string>Quit</string></property></action>
+   <action name="actionToggleTheme"><property name="text"><string>Toggle Light/Dark Theme</string></property></action>
+   <action name="actionToggleLeftPanel"><property name="text"><string>Toggle Settings Panel</string></property></action>
+   <action name="actionAbout"><property name="text"><string>About</string></property></action>
+
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>PlotWidget</class>
+   <extends>QWidget</extends>
+   <header>pyqtgraph</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>

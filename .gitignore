@@ -1,0 +1,57 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# ── Virtual environments ──────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# ── Distribution / packaging ──────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# ── pytest / coverage ─────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# ── IDEs ──────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Qt build artefacts ────────────────────────────────────────
+# Compiled Qt translation files (we ship .py i18n instead)
+*.qm
+*.pyc
+
+# Qt Designer backup files
+*.ui.bak
+
+# ── SPICE / simulation outputs ────────────────────────────────
+*.raw
+*.log
+*.out
+*.cir.bak
+spice_output/
+
+# ── OS artefacts ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Project outputs (generated at runtime) ────────────────────
+exports/
+reports/
