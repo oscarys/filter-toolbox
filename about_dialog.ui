@@ -128,7 +128,7 @@
       <item>
        <widget class="QLabel" name="lblStudent1">
         <property name="text">
-         <string>Student One — Signal Processing</string>
+         <string>Diego Luna Covarrubias — Signal Processing</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignHCenter</set>
@@ -138,7 +138,7 @@
       <item>
        <widget class="QLabel" name="lblStudent2">
         <property name="text">
-         <string>Student Two — Circuit Synthesis</string>
+         <string>Manuel Bautista Zepeda — Circuit Synthesis</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignHCenter</set>
@@ -148,7 +148,7 @@
       <item>
        <widget class="QLabel" name="lblStudent3">
         <property name="text">
-         <string>Student Three — SPICE Simulation</string>
+         <string>Patricio Flores Calvo— SPICE Simulation</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignHCenter</set>
@@ -198,7 +198,7 @@
       <item>
        <widget class="QLabel" name="lblInstructor1">
         <property name="text">
-         <string>Marinieves Pardo</string>
+         <string>Marinieves Pardo Rodríguez</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignHCenter</set>
@@ -208,7 +208,7 @@
       <item>
        <widget class="QLabel" name="lblInstructor2">
         <property name="text">
-         <string>Oscar Yáñez</string>
+         <string>Erik René Bojorges Valdés</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignHCenter</set>
@@ -218,7 +218,7 @@
       <item>
        <widget class="QLabel" name="lblInstructor3">
         <property name="text">
-         <string>Instructor Three</string>
+         <string>Oscar Yáñez Suárez</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignHCenter</set>
