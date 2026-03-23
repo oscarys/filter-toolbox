@@ -1,6 +1,6 @@
 # Analog Filter Design Toolbox
 
-![CI](https://github.com/<org>/filter-toolbox/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/oscarys/filter-toolbox/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.6%2B-green)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
