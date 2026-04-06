@@ -151,8 +151,20 @@ def compute_minimum_order(spec: FilterSpec) -> int:
     For BP/BS convert the two-sided spec to a LP prototype selectivity ratio first.
     Always round up to the nearest integer (math.ceil).
     """
-    raise NotImplementedError("STUDENT: implement compute_minimum_order()")
+    # Orden por default
+    n = 1
 
+    # Calcula especificación
+    if spec.approximation == Approximation.BUTTERWORTH:
+        n = np.ceil(np.log((10**(spec.a_s/10)-1) / (10**(spec.a_p/10)-1)) / (2*np.log(spec.omega_s/spec.omega_p))).astype(int)
+    elif spec.approximation == Approximation.CHEBYSHEV_I:
+        pass
+    elif spec.approximation == Approximation.CHEBYSHEV_II:
+        pass
+    elif spec.approximation == Approximation.ELLIPTIC:
+        pass
+    # Regresa el orden del filtro
+    return n
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ── STUDENT ENTRY POINT 2 ────────────────────────────────────────────────────
@@ -191,7 +203,9 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     Use spec.omega_p, spec.omega_s, spec.omega_p2, spec.omega_s2 (rad/s).
     Use spec.ripple_eps for the prototype ripple parameter.
     """
-    raise NotImplementedError("STUDENT: implement compute_transfer_function()")
+
+    n = compute_minimum_order(spec)
+    #raise NotImplementedError("STUDENT: implement compute_transfer_function()")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
