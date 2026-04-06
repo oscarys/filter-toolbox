@@ -158,12 +158,14 @@ def compute_minimum_order(spec: FilterSpec) -> int:
     if spec.approximation == Approximation.BUTTERWORTH:
         n = np.ceil(np.log((10**(spec.a_s/10)-1) / (10**(spec.a_p/10)-1)) / (2*np.log(spec.omega_s/spec.omega_p))).astype(int)
     elif spec.approximation == Approximation.CHEBYSHEV_I:
-        pass
+        n = np.ceil(np.acosh(np.sqrt((10**(spec.a_s/10)-1) / spec.ripple_eps**2)) / np.acosh(spec.omega_s/spec.omega_p)).astype(int)
     elif spec.approximation == Approximation.CHEBYSHEV_II:
         pass
     elif spec.approximation == Approximation.ELLIPTIC:
         pass
+        
     # Regresa el orden del filtro
+    print(f'debug: orden del filtro {n}')
     return n
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -204,8 +206,9 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     Use spec.ripple_eps for the prototype ripple parameter.
     """
 
+    # Calcula el orden del filtro
     n = compute_minimum_order(spec)
-    #raise NotImplementedError("STUDENT: implement compute_transfer_function()")
+    raise NotImplementedError("STUDENT: implement compute_transfer_function()")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
