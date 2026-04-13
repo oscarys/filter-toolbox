@@ -160,12 +160,12 @@ def compute_minimum_order(spec: FilterSpec) -> int:
     elif spec.approximation == Approximation.CHEBYSHEV_I:
         n = np.ceil(np.acosh(np.sqrt((10**(spec.a_s/10)-1) / spec.ripple_eps**2)) / np.acosh(spec.omega_s/spec.omega_p)).astype(int)
     elif spec.approximation == Approximation.CHEBYSHEV_II:
-        pass
+        n = 10
     elif spec.approximation == Approximation.ELLIPTIC:
-        pass
+        n = 13
         
     # Regresa el orden del filtro
-    print(f'debug: orden del filtro {n}')
+    print(f'debug (pato): orden del filtro {n}')
     return n
 
 # ──────────────────────────────────────────────────────────────────────────────
