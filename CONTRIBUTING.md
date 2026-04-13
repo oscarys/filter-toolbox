@@ -24,6 +24,7 @@ pip install -r requirements.txt
 
 # 3. Create your feature branch from develop
 git checkout develop
+git pull
 git checkout -b feature/your-name-task
 # e.g. feature/alice-butterworth-tf
 
