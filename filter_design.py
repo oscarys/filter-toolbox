@@ -153,16 +153,34 @@ def compute_minimum_order(spec: FilterSpec) -> int:
     """
     # Orden por default
     n = 1
+    
+    # Cociente de selectividad según tipo de filtro para las especificaciones 
+    # Usar omega_ratio en vez de  spec.omega_s/spec.omega_p directo,ya que eso solo
+    # funciona para LP. Aquí calculamos el cociente  para cada caso.
+    if spec.filter_type == FilterType.LOWPASS:
+        # LP: directo, fs > fp entonces ratio > 1
+        omega_ratio = spec.omega_s / spec.omega_p
+
+
+    elif spec.filter_type == FilterType.HIGHPASS:
+        # HP: se invierte porque la transformación LP a HP voltea el eje de
+        # frecuencias. fp > fs en HP, al invertir obtenemos ratio > 1.
+        omega_ratio = spec.omega_p / spec.omega_s
+
+    #funcion para bandstop
+    #Funcion para bandpass
 
     # Calcula especificación
     if spec.approximation == Approximation.BUTTERWORTH:
-        n = np.ceil(np.log((10**(spec.a_s/10)-1) / (10**(spec.a_p/10)-1)) / (2*np.log(spec.omega_s/spec.omega_p))).astype(int)
+        n = np.ceil(np.log((10**(spec.a_s/10)-1) / (10**(spec.a_p/10)-1)) / (2*np.log(omega_ratio))).astype(int)
     elif spec.approximation == Approximation.CHEBYSHEV_I:
-        n = np.ceil(np.acosh(np.sqrt((10**(spec.a_s/10)-1) / spec.ripple_eps**2)) / np.acosh(spec.omega_s/spec.omega_p)).astype(int)
+        n = np.ceil(np.acosh(np.sqrt((10**(spec.a_s/10)-1) / spec.ripple_eps**2)) / np.acosh(omega_ratio)).astype(int)
     elif spec.approximation == Approximation.CHEBYSHEV_II:
-        n = 10
+        n = np.ceil(np.acosh(np.sqrt((10**(spec.a_s/10)-1) / spec.ripple_eps**2)) / np.acosh(omega_ratio)).astype(int)
     elif spec.approximation == Approximation.ELLIPTIC:
-        n = 13
+        import scipy.signal as sig
+        n, _ = sig.ellipord(wp=1.0, ws=omega_ratio, gpass=spec.a_p, gstop=spec.a_s, analog=True)
+        n = int(n)
         
     # Regresa el orden del filtro
 
