@@ -61,12 +61,12 @@ Do **not** modify `mainwindow.py`, `main.py`, or any file in `resources/`.
 |---|---|
 | `compute_minimum_order` | |
 | `compute_transfer_function` | |
-| `factored_biquads` | |
-| `compute_frequency_response` | |
-| `synthesise_sallen_key` | |
-| `synthesise_tow_thomas` | |
-| `synthesise_deliyannis` | |
-| `generate_spice_netlist` | |
+| `factored_biquads` | todos |
+| `compute_frequency_response` | todos |
+| `synthesise_sallen_key` | Diego |
+| `synthesise_tow_thomas` | Manu |
+| `synthesise_deliyannis` | Patricio |
+| `generate_spice_netlist` | Oscar |
 | `run_spice_simulation` | |
 
 ## Pull Request checklist
