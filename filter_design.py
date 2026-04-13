@@ -208,9 +208,33 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     Use spec.ripple_eps for the prototype ripple parameter.
     """
 
-    # Calcula el orden del filtro
+    # 1. Calcula el orden del filtro
     n = compute_minimum_order(spec)
-    raise NotImplementedError("STUDENT: implement compute_transfer_function()")
+    
+    # Crea el objeto para la fucnión de transferencia
+    tf = TransferFunction()
+    
+    #  2. Compute LP prototype poles (and zeros for Cheby-II / Elliptic).
+    # OJO cálculo de ejemplo TEMPORAL: polos chebyshev orden 4
+    n = 4
+    wc = 2*np.pi*100
+    e = 0.01
+    a = (1/n)*np.arcsinh(1/e)
+    k = np.arange(0, 2*n)
+    p = np.sin((2*k+1)*np.pi/(2*n))*np.sinh(a) + 1j*np.cos((2*k+1)*np.pi/(2*n))*np.cosh(a)
+    tf.poles = np.array([pi for pi in p if pi.real < 0])
+    tf.numerator = np.array([wc**n])
+    den = np.poly(tf.poles)
+    tf.denominator = np.array([den[0], wc*den[1], (wc**2)*den[2], (wc**3)*den[3], wc**4])
+    
+    #  3. Apply LP→{LP|HP|BP|BS} frequency transformation using spec.omega_p/s.
+    #  4. Denormalise to the physical edge frequency.
+    #  5. Express as rational polynomial in *s*.
+    
+    # Regresa el objeto función de transferencia y el orden
+    return (tf, n)
+    
+    #raise NotImplementedError("STUDENT: implement compute_transfer_function()")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
