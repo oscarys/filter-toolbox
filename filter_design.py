@@ -165,7 +165,7 @@ def compute_minimum_order(spec: FilterSpec) -> int:
         pass
         
     # Regresa el orden del filtro
-    print(f'debug: orden del filtro {n}')
+    print(f'debug (manu): orden del filtro {n}')
     return n
 
 # ──────────────────────────────────────────────────────────────────────────────
