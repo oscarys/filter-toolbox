@@ -245,29 +245,29 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     Use spec.ripple_eps for the prototype ripple parameter.
     """
 
-    # 1. Calcula el orden del filtro
+    # Calcula el orden del filtro
     n = compute_minimum_order(spec)
-    
+
+    # Calcula los prototipos normalizados pasabajas
+    match spec.approximation:
+        case Approximation.BUTTERWORTH: z, p, k = sps.buttap(n) 
+        case Approximation.CHEBYSHEV_I: z, p, k = sps.cheb1ap(n, spec.ripple_eps)
+        case Approximation.CHEBYSHEV_II: z, p, k = sps.cheb2ap(n, spec.ripple_eps)
+        case Approximation.ELLIPTIC: z, p, k = sps.ellipap(n, spec.ripple_eps, spec.ripple_eps)
+
+    # Calcula los polinomios normalizados de la función de transferencia
+    nb, na = sps.zpk2tf(z, p, k)
+
+    # Transformación del filtro pasabajas a su tipo final:
+    #match spec.filter_type:
+    #    case FilterType.LOWPASS:  b, a = sps.lp2lp(nb, na)
+    #    case FilterType.HIGHPASS: b, a = sps.lp2hp(nb, na)
+    #    case FilterType.BANDPASS: b, a = sps.lp2bp(nb, na)
+    #    case FilterType.BANDSTOP: b, a = sps.lp2bs(nb, na)
+
     # Crea el objeto para la fucnión de transferencia
-    tf = TransferFunction()
-    
-    #  2. Compute LP prototype poles (and zeros for Cheby-II / Elliptic).
-    # OJO cálculo de ejemplo TEMPORAL: polos chebyshev orden 4
-    n = 4
-    wc = 2*np.pi*100
-    e = 0.01
-    a = (1/n)*np.arcsinh(1/e)
-    k = np.arange(0, 2*n)
-    p = np.sin((2*k+1)*np.pi/(2*n))*np.sinh(a) + 1j*np.cos((2*k+1)*np.pi/(2*n))*np.cosh(a)
-    tf.poles = np.array([pi for pi in p if pi.real < 0])
-    tf.numerator = np.array([wc**n])
-    den = np.poly(tf.poles)
-    tf.denominator = np.real(np.array([den[0], wc*den[1], (wc**2)*den[2], (wc**3)*den[3], (wc**4)*den[4]]))
-    
-    #  3. Apply LP→{LP|HP|BP|BS} frequency transformation using spec.omega_p/s.
-    #  4. Denormalise to the physical edge frequency.
-    #  5. Express as rational polynomial in *s*.
-    
+    tf = TransferFunction(nb, na)
+           
     # Regresa el objeto función de transferencia y el orden
     return (tf, n)
     
@@ -330,8 +330,8 @@ def factored_biquads(tf: TransferFunction) -> list[TransferFunction]:
 
 def compute_frequency_response(
     tf: TransferFunction,
-    f_start: float = 1.0,
-    f_stop: float = 1e6,
+    f_start: float = (0.01)*2*np.pi,
+    f_stop: float = (1e2)*2*np.pi,
     n_points: int = 1000,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
