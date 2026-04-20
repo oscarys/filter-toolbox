@@ -263,6 +263,44 @@ def factored_biquads(tf: TransferFunction) -> list[TransferFunction]:
     Use scipy.signal.tf2sos then convert each row back to a TransferFunction.
     Apply Q-ordered pairing and output-ordering optimisation.
     """
+
+    sos = scipy.signal.tf2sos(tf.numerator, tf.denominator)
+
+    sections = []
+
+    for row in sos:
+        b = row[:3].copy()
+        a = row[3:].copy()
+
+        if not np.isclose(a[0], 1.0):
+            b = b / a[0]
+            a = a / a[0]
+
+        if np.isclose(a[2], 0.0) and np.isclose(b[2], 0.0):
+            b = b[:2]
+            a = a[:2]
+
+        section_tf = TransferFunction(
+            numerator = np.array(b),
+            denominator = np.array(a)
+        )
+
+        sections.append(section_tf)
+
+    # ----- Q-ordering (inline) -----
+    def compute_Q(section):
+        a = section.denominator
+        if len(a) == 3:
+            a1 = a[1]
+            a2 = a[2]
+            if a1 != 0 and a2 > 0:
+                return np.sqrt(a2) / a1
+        return 0.0
+
+    sections = sorted(sections, key = compute_Q)
+
+    return sections
+
     raise NotImplementedError("STUDENT: implement factored_biquads()")
 
 
@@ -303,6 +341,22 @@ def compute_frequency_response(
     Unwrap the phase with np.unwrap before converting to degrees.
     Group delay = -d(phase_rad)/d(omega).  Use np.gradient for numerical diff.
     """
+    freqs_hz = np.logspace(np.log10(f_start), np.log10(f_stop), n_points)
+
+    omega = 2*np.pi*freqs_hz
+
+    w, H = freqs(tf.numerator, tf.denominator, worN=omega)
+
+    magnitude_db = 20*np.log10(np.abs(H))
+
+    phase_rad = np.unwrap(np.angle(H))
+    phase_deg = np.degrees(phase_rad)
+
+    dphi_domega = np.gradient(phase_rad, omega)
+    group_delay_s = -dphi_domega
+
+    return freqs_hz, magnitude_db, phase_deg, group_delay_s
+
     raise NotImplementedError("STUDENT: implement compute_frequency_response()")
 
 
