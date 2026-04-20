@@ -244,7 +244,7 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     tf.poles = np.array([pi for pi in p if pi.real < 0])
     tf.numerator = np.array([wc**n])
     den = np.poly(tf.poles)
-    tf.denominator = np.array([den[0], wc*den[1], (wc**2)*den[2], (wc**3)*den[3], wc**4])
+    tf.denominator = np.real(np.array([den[0], wc*den[1], (wc**2)*den[2], (wc**3)*den[3], (wc**4)*den[4]]))
     
     #  3. Apply LP→{LP|HP|BP|BS} frequency transformation using spec.omega_p/s.
     #  4. Denormalise to the physical edge frequency.
@@ -282,29 +282,11 @@ def factored_biquads(tf: TransferFunction) -> list[TransferFunction]:
     Use scipy.signal.tf2sos then convert each row back to a TransferFunction.
     Apply Q-ordered pairing and output-ordering optimisation.
     """
-
-    sos = scipy.signal.tf2sos(tf.numerator, tf.denominator)
-
-    sections = []
-
-    for row in sos:
-        b = row[:3].copy()
-        a = row[3:].copy()
-
-        if not np.isclose(a[0], 1.0):
-            b = b / a[0]
-            a = a / a[0]
-
-        if np.isclose(a[2], 0.0) and np.isclose(b[2], 0.0):
-            b = b[:2]
-            a = a[:2]
-
-        section_tf = TransferFunction(
-            numerator = np.array(b),
-            denominator = np.array(a)
-        )
-
-        sections.append(section_tf)
+     
+    # Factoriza en secciones analógicas de primer y segundo orden 
+    sos = sps.tf2sos(tf.numerator, tf.denominator, analog=True)
+    # Genera los objetos TransferFunction para cada seccion
+    sections = [TransferFunction(row[:3], row[3:]) for row in sos]
 
     # ----- Q-ordering (inline) -----
     def compute_Q(section):
@@ -320,7 +302,7 @@ def factored_biquads(tf: TransferFunction) -> list[TransferFunction]:
 
     return sections
 
-    raise NotImplementedError("STUDENT: implement factored_biquads()")
+    # raise NotImplementedError("STUDENT: implement factored_biquads()")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
