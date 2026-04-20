@@ -168,8 +168,26 @@ def compute_minimum_order(spec: FilterSpec) -> int:
         # frecuencias. fp > fs en HP, al invertir obtenemos ratio > 1.
         omega_ratio = spec.omega_p / spec.omega_s
 
-    #funcion para bandstop
-    #Funcion para bandpass
+    #funcion para bandpass
+    elif spec.filter_type == FilterType.BANDPASS:
+        # BP: convertimos los dos bordes de rechazo al prototipo LP equivalente
+        # y tomamos el más restrictivo (el menor) para garantizar ambos bordes.
+        import math
+        omega_0 = math.sqrt(spec.omega_p * spec.omega_p2)
+        BW      = spec.omega_p2 - spec.omega_p
+        Os1 = abs(spec.omega_s**2  - omega_0**2) / (BW * spec.omega_s)
+        Os2 = abs(spec.omega_s2**2 - omega_0**2) / (BW * spec.omega_s2)
+        omega_ratio = min(Os1, Os2)
+
+    #Funcion para bandstop
+    elif spec.filter_type == FilterType.BANDSTOP:
+        # BS: inverso del BP, el rechazo está en el centro.
+        import math
+        omega_0 = math.sqrt(spec.omega_p * spec.omega_p2)
+        BW      = spec.omega_p2 - spec.omega_p
+        Os1 = (BW * spec.omega_s)  / abs(spec.omega_s**2  - omega_0**2)
+        Os2 = (BW * spec.omega_s2) / abs(spec.omega_s2**2 - omega_0**2)
+        omega_ratio = min(Os1, Os2)
 
     # Calcula especificación
     if spec.approximation == Approximation.BUTTERWORTH:
