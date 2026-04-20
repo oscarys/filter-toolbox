@@ -59,10 +59,10 @@ Do **not** modify `mainwindow.py`, `main.py`, or any file in `resources/`.
 
 | Function | Owner (assign in GitHub) |
 |---|---|
-| `compute_minimum_order` | |
+| `compute_minimum_order` | OK |
 | `compute_transfer_function` | |
-| `factored_biquads` | todos |
-| `compute_frequency_response` | todos |
+| `factored_biquads` | OK |
+| `compute_frequency_response` | OK |
 | `synthesise_sallen_key` | Diego |
 | `synthesise_tow_thomas` | Manu |
 | `synthesise_deliyannis` | Patricio |
