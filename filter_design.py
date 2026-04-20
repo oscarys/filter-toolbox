@@ -16,6 +16,7 @@ Dependencies (install via pip):
 
 from __future__ import annotations
 import numpy as np
+import scipy.signal as sps
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional
@@ -359,23 +360,25 @@ def compute_frequency_response(
     Unwrap the phase with np.unwrap before converting to degrees.
     Group delay = -d(phase_rad)/d(omega).  Use np.gradient for numerical diff.
     """
+    
+    # Eje logarítmico de frecuencias en Hz
     freqs_hz = np.logspace(np.log10(f_start), np.log10(f_stop), n_points)
-
+    # Mismo eje, en rad/s
     omega = 2*np.pi*freqs_hz
-
-    w, H = freqs(tf.numerator, tf.denominator, worN=omega)
-
+    # Calcula la respuesta en frecuencia
+    w, H = sps.freqs(tf.numerator, tf.denominator, worN=omega)
+    # Calcula la magnitud en dB
     magnitude_db = 20*np.log10(np.abs(H))
-
+    # Calcula la fase en rad/s y grados
     phase_rad = np.unwrap(np.angle(H))
     phase_deg = np.degrees(phase_rad)
-
+    # Calcula el retardo de grupo 
     dphi_domega = np.gradient(phase_rad, omega)
     group_delay_s = -dphi_domega
+    # Regresa la tupla de arreglos calculados
+    return (freqs_hz, magnitude_db, phase_deg, group_delay_s)
 
-    return freqs_hz, magnitude_db, phase_deg, group_delay_s
-
-    raise NotImplementedError("STUDENT: implement compute_frequency_response()")
+    # raise NotImplementedError("STUDENT: implement compute_frequency_response()")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
