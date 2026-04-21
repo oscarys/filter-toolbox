@@ -485,9 +485,9 @@ class MainWindow(QMainWindow):
             try:
                 freqs, mag, _, _ = fd.compute_frequency_response(
                     bq, f_start=f_start, f_stop=f_stop)
-                color = palette[i % len(palette)]
-                pen = pg.mkPen(color, width=1.2,
-                               style=Qt.PenStyle.DashLine)
+                color = pg.mkColor(palette[i % len(palette)])
+                color.setAlpha(180)   # ~70% opacity
+                pen = pg.mkPen(color, width=1.2)
                 self._plot_mag.plot(freqs, mag, pen=pen,
                                     name=f"SOS {i + 1}")
             except Exception:
