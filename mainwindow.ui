@@ -337,6 +337,12 @@
           </spacer>
          </item>
          <item>
+          <widget class="QCheckBox" name="chkShowSOS">
+           <property name="text"><string>Show SOS stages</string></property>
+           <property name="checked"><bool>false</bool></property>
+          </widget>
+         </item>
+         <item>
           <widget class="QPushButton" name="btnToggleTheme">
            <property name="text"><string>☀ Light / Dark</string></property>
           </widget>
