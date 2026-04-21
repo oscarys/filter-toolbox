@@ -63,6 +63,11 @@ QPushButton#btnToggleTheme {
 }
 QPushButton#btnToggleTheme:hover { background-color: #5a6268; }
 
+QPushButton#btnResetZoom {
+    background-color: #5a6a8a;
+}
+QPushButton#btnResetZoom:hover { background-color: #4a5a7a; }
+
 QPushButton#btnSimulate {
     background-color: #1a8a42;
 }
@@ -222,6 +227,11 @@ QPushButton#btnToggleTheme {
     background-color: #4a5568;
 }
 QPushButton#btnToggleTheme:hover { background-color: #5a6780; }
+
+QPushButton#btnResetZoom {
+    background-color: #2e4060;
+}
+QPushButton#btnResetZoom:hover { background-color: #3a5278; }
 
 QPushButton#btnSimulate {
     background-color: #1a7a3c;
