@@ -245,18 +245,67 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     Use spec.ripple_eps for the prototype ripple parameter.
     """
 
-    # Calcula el orden del filtro
+    # Calcula el orden del filtro con la funcion antes implementada 
     n = compute_minimum_order(spec)
 
-    # Calcula los prototipos normalizados pasabajas
+    # Calcula los prototipos normalizados pasabajas (wp= 1rad/s)
+    # cheb1ap recibe rp en dB (=a_p), No epsilon
+    # cheb2ap recibe rs en dB (=a_s), NO epsilon
+    # ellipap recibe rp y rs ambos en dB 
     match spec.approximation:
+        # Respuesta maximalmente plana 
         case Approximation.BUTTERWORTH: z, p, k = sps.buttap(n) 
-        case Approximation.CHEBYSHEV_I: z, p, k = sps.cheb1ap(n, spec.ripple_eps)
-        case Approximation.CHEBYSHEV_II: z, p, k = sps.cheb2ap(n, spec.ripple_eps)
-        case Approximation.ELLIPTIC: z, p, k = sps.ellipap(n, spec.ripple_eps, spec.ripple_eps)
+        
+        # rp = rizado máximo en la banda de paso en dB 
+        case Approximation.CHEBYSHEV_I: z, p, k = sps.cheb1ap(n, rp=spec.a_p)
+
+        # rs = atenuacion minima en la banda de rechazo en dB 
+        case Approximation.CHEBYSHEV_II: z, p, k = sps.cheb2ap(n, rs=spec.a_s)
+
+        # Ambos: rizado en paso y atenuacion en rechazo
+        case Approximation.ELLIPTIC: z, p, k = sps.ellipap(n, rp=spec.a_p, rs=spec.a_s)
+
+    # TRANSFORMACION DE FRECUENCIA LP -> {LP,HP,BP,BS}, AQUI SE OBTIENEN FRECUENCIAS DE CORTE 
+    # Usamos z,p,k en lugar de polinomios para hacerlo mas estable con ordenes altos
+    # lp2lp_zpk: escala la frecuencia de 1 rad/s -> omega_p real
+    # lp2hp_zpk: invierte el eje de frecuencias y escala a omega_p
+    # lp2bp_zpk: abre la banda alrededor de omega_0 con ancho BW
+    # lp2bs_zpk: inverso del BP ,  rechazo en el centro
+
+    match spec.filter_type : 
+	case FilterType.LOWPASS: 
+	    # Frecuencia de corte: omega_p del usuario
+	    z, p, k = sps.lp2lp_zpk(z, p, k, wo=spec.omega_p)
+
+	case FilterType.HIGHPASS:
+            # Frecuencia de giro: omega_p. scipy hace s -> omega_p/s internamente,
+            # que es la inversión del eje de frecuencias que ya vimos en el orden.
+            z, p, k = sps.lp2hp_zpk(z, p, k, wo=spec.omega_p)
+
+        case FilterType.BANDPASS:
+            # Necesitamos la frecuencia central GEOMÉTRICA y el ancho de banda.
+            # Se usa geométrica porque el filtro es simétrico en escala logarítmica.
+            omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)  # frec. central
+            BW      = spec.omega_p2 - spec.omega_p            # ancho de banda
+            z, p, k = sps.lp2bp_zpk(z, p, k, wo=omega_0, bw=BW)
+
+        case FilterType.BANDSTOP:
+            # Mismo cálculo de omega_0 y BW que BP,
+            # pero la transformación pone el rechazo en el centro.
+            omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
+            BW      = spec.omega_p2 - spec.omega_p
+            z, p, k = sps.lp2bs_zpk(z, p, k, wo=omega_0, bw=BW)
+
+    
+
 
     # Calcula los polinomios normalizados de la función de transferencia
-    nb, na = sps.zpk2tf(z, p, k)
+    # Convertir ZPK a coeficientes de polinomio 
+    # zpk2tf convierte zeros,polos,ganancia a coeficientes num/den en orden
+    # descendente de potencias: [b_n, b_{n-1}, ..., b_0] / [a_n, ..., a_0]
+    # np.real() elimina la parte imaginaria residual de punto flotante (~1e-16).
+    # Los coeficientes deben ser reales porque los polos complejos siempre son pares conjugados.
+    num, den = sps.zpk2tf(z, p, k)
 
     # Transformación del filtro pasabajas a su tipo final:
     #match spec.filter_type:
@@ -265,8 +314,20 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     #    case FilterType.BANDPASS: b, a = sps.lp2bp(nb, na)
     #    case FilterType.BANDSTOP: b, a = sps.lp2bs(nb, na)
 
+    #  objeto TransferFunction
+    # Se necesita los coeficientes para graficar H(jω) y los polos/zeros para el mapa polo-cero.
+    tf = TransferFunction(
+        numerator   = np.real(num),
+        denominator = np.real(den),
+        poles       = p,
+        zeros       = z,
+        gain        = float(np.real(k)),
+    )
+
+    print(f'debug: orden={n}, polos={p}')
+
     # Crea el objeto para la fucnión de transferencia
-    tf = TransferFunction(nb, na)
+    # tf = TransferFunction(nb, na)
            
     # Regresa el objeto función de transferencia y el orden
     return (tf, n)
