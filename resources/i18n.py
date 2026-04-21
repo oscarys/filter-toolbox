@@ -38,6 +38,7 @@ STRINGS = {
         "btn_export_netlist":   "Export Netlist",
         "btn_export_report":    "Export Report",
         "btn_theme":            "☀ Light / Dark",
+        "chk_show_sos":         "Show SOS stages",
 
         # Group boxes
         "gb_approx":            "Approximation & Type",
@@ -174,6 +175,7 @@ STRINGS = {
         "btn_export_netlist":   "Exportar Netlist",
         "btn_export_report":    "Exportar Reporte",
         "btn_theme":            "☀ Claro / Oscuro",
+        "chk_show_sos":         "Mostrar etapas SOS",
 
         # Group boxes
         "gb_approx":            "Aproximación y Tipo",

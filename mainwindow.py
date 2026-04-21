@@ -75,6 +75,9 @@ class MainWindow(QMainWindow):
         self._dark_mode : bool = True
         self._lang      : str  = "en"
         self._tf        : TransferFunction | None = None
+        self._biquads   : list[TransferFunction]  = []
+        self._f_start   : float = 1.0
+        self._f_stop    : float = 1e6
         self._components: list[ComponentValue]    = []
         self._sim_result: SimulationResult | None = None
         self._sim_thread: QThread | None          = None
@@ -192,6 +195,7 @@ class MainWindow(QMainWindow):
 
         self.cbFilterType.currentIndexChanged.connect(self._update_spec_fields)
         self.cbApproximation.currentIndexChanged.connect(self._update_spec_fields)
+        self.chkShowSOS.stateChanged.connect(self._on_sos_toggled)
 
     # ── i18n ─────────────────────────────────────────────────────────────────
 
@@ -220,6 +224,7 @@ class MainWindow(QMainWindow):
         self.btnExportNetlist.setText(t("btn_export_netlist"))
         self.btnExportReport.setText(t("btn_export_report"))
         self.btnToggleTheme.setText(t("btn_theme"))
+        self.chkShowSOS.setText(t("chk_show_sos"))
 
         self.gbApprox.setTitle(t("gb_approx"))
         self.gbSpecs.setTitle(t("gb_specs"))
@@ -351,19 +356,39 @@ class MainWindow(QMainWindow):
             self._tf, computed_order = fd.compute_transfer_function(spec)
             self.lblComputedOrder.setText(str(computed_order))
 
+            # ── Frequency range: always bracket the actual spec edges ──────
+            ft = fd.FilterType(self.cbFilterType.currentIndex())
+            if ft in (fd.FilterType.BANDPASS, fd.FilterType.BANDSTOP):
+                # For two-band types use the outer edges
+                f_lo = min(spec.fp, spec.fs, spec.fp2, spec.fs2)
+                f_hi = max(spec.fp, spec.fs, spec.fp2, spec.fs2)
+            else:
+                f_lo = min(spec.fp, spec.fs)
+                f_hi = max(spec.fp, spec.fs)
+            # Sweep one decade below the lower edge and one above the upper
+            f_start = f_lo / 10.0
+            f_stop  = f_hi * 10.0
+
             freqs, mag_db, phase_deg, gd = fd.compute_frequency_response(
-                self._tf, f_start=spec.fp / 1000, f_stop=spec.fp * 1000)
+                self._tf, f_start=f_start, f_stop=f_stop)
             self._plot_theoretical(freqs, mag_db, phase_deg, gd)
+
+            # ── SOS stage overlays (if checkbox is on) ────────────────────
+            self._biquads = fd.factored_biquads(self._tf)
+            self._f_start = f_start
+            self._f_stop  = f_stop
+            if self.chkShowSOS.isChecked():
+                self._plot_sos_responses(self._biquads, f_start, f_stop)
+
             self.tabPlots.setCurrentIndex(0)
             self._plot_pole_zero(self._tf)
 
             topology = Topology(self.cbImplementation.currentIndex())
-            biquads  = fd.factored_biquads(self._tf)
             self._components = {
                 Topology.SALLEN_KEY: fd.synthesise_sallen_key,
                 Topology.TOW_THOMAS: fd.synthesise_tow_thomas,
                 Topology.DELIYANNIS: fd.synthesise_deliyannis,
-            }[topology](biquads, self.sbRBase.value(), self.sbCBase.value(),
+            }[topology](self._biquads, self.sbRBase.value(), self.sbCBase.value(),
                         self._read_eseries(self.cbRSeries),
                         self._read_eseries(self.cbCSeries))
             self._populate_component_table(self._components)
@@ -444,6 +469,48 @@ class MainWindow(QMainWindow):
             if not pw.plotItem.legend:
                 pw.addLegend()
 
+    def _plot_sos_responses(
+        self,
+        biquads: list[TransferFunction],
+        f_start: float,
+        f_stop: float,
+    ) -> None:
+        """Overlay individual SOS stage responses as thin dashed lines."""
+        # Distinct muted colours, one per stage, cycling if order > 8
+        palette = [
+            "#a0c4ff", "#b9fbc0", "#ffd6a5", "#ffadad",
+            "#caffbf", "#fdffb6", "#c77dff", "#f4acb7",
+        ]
+        for i, bq in enumerate(biquads):
+            try:
+                freqs, mag, _, _ = fd.compute_frequency_response(
+                    bq, f_start=f_start, f_stop=f_stop)
+                color = palette[i % len(palette)]
+                pen = pg.mkPen(color, width=1.2,
+                               style=Qt.PenStyle.DashLine)
+                self._plot_mag.plot(freqs, mag, pen=pen,
+                                    name=f"SOS {i + 1}")
+            except Exception:
+                pass   # skip silently if a biquad isn't ready yet
+
+    def _on_sos_toggled(self) -> None:
+        """Re-draw the magnitude plot when the SOS checkbox changes."""
+        if not self._tf:
+            return
+        # Re-plot theoretical (clears previous SOS lines too)
+        try:
+            freqs, mag_db, phase_deg, gd = fd.compute_frequency_response(
+                self._tf, f_start=self._f_start, f_stop=self._f_stop)
+            self._plot_theoretical(freqs, mag_db, phase_deg, gd)
+            if self.chkShowSOS.isChecked() and self._biquads:
+                self._plot_sos_responses(
+                    self._biquads, self._f_start, self._f_stop)
+            # Re-overlay SPICE if available
+            if self._sim_result:
+                self._plot_simulated(self._sim_result)
+        except Exception:
+            pass
+
     def _plot_simulated(self, result: SimulationResult) -> None:
         name = self._("legend_spice")
         self._plot_mag.plot(result.frequencies, result.magnitude_db,
@@ -512,6 +579,9 @@ class MainWindow(QMainWindow):
 
     def _on_new(self) -> None:
         self._tf = None
+        self._biquads = []
+        self._f_start = 1.0
+        self._f_stop  = 1e6
         self._components = []
         self._sim_result = None
         for pw in (self._plot_mag, self._plot_phase, self._plot_gd, self._plot_pz):
