@@ -38,6 +38,7 @@ STRINGS = {
         "btn_export_netlist":   "Export Netlist",
         "btn_export_report":    "Export Report",
         "btn_theme":            "☀ Light / Dark",
+        "btn_reset_zoom":       "⊙ Reset Zoom",
         "chk_show_sos":         "Show SOS stages",
 
         # Group boxes
@@ -175,6 +176,7 @@ STRINGS = {
         "btn_export_netlist":   "Exportar Netlist",
         "btn_export_report":    "Exportar Reporte",
         "btn_theme":            "☀ Claro / Oscuro",
+        "btn_reset_zoom":       "⊙ Reset Zoom",
         "chk_show_sos":         "Mostrar etapas SOS",
 
         # Group boxes

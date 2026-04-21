@@ -181,6 +181,7 @@ class MainWindow(QMainWindow):
         self.btnSimulate.clicked.connect(self._on_simulate)
         self.btnExportNetlist.clicked.connect(self._on_export_netlist)
         self.btnExportReport.clicked.connect(self._on_export_report)
+        self.btnResetZoom.clicked.connect(self._on_reset_zoom)
         self.btnToggleTheme.clicked.connect(self._on_toggle_theme)
 
         self.actionNew.triggered.connect(self._on_new)
@@ -223,6 +224,7 @@ class MainWindow(QMainWindow):
         self.btnSimulate.setText(t("btn_simulate"))
         self.btnExportNetlist.setText(t("btn_export_netlist"))
         self.btnExportReport.setText(t("btn_export_report"))
+        self.btnResetZoom.setText(t("btn_reset_zoom"))
         self.btnToggleTheme.setText(t("btn_theme"))
         self.chkShowSOS.setText(t("chk_show_sos"))
 
@@ -602,6 +604,12 @@ class MainWindow(QMainWindow):
 
     def _on_toggle_left_panel(self) -> None:
         self.leftPanel.setVisible(not self.leftPanel.isVisible())
+
+    def _on_reset_zoom(self) -> None:
+        """Reset all plot views to fit their current data."""
+        for pw in (self._plot_mag, self._plot_phase,
+                   self._plot_gd, self._plot_pz):
+            pw.autoRange()
 
     def _on_about(self) -> None:
         dlg = uic.loadUi(ABOUT_FILE)
