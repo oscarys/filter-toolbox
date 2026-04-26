@@ -563,12 +563,27 @@ def synthesise_deliyannis(
         # Por lo tanto:
         #   ω₀ = sqrt(a2/a0)
         #   Q  = sqrt(a0·a2) / a1
+
         a0 = den[0]
         a1 = den[1]
         a2 = den[2]
 
-        omega_0 = np.sqrt(abs(a2 / a0))   # frecuencia natural en rad/s
-        Q = np.sqrt(abs(a0 * a2)) / abs(a1)  # factor de calidad
+        # Guardia: si a0 es cero o muy pequeño, es una sección de primer orden
+        # disfrazada de segundo orden. Deliyannis-Friend no aplica aquí.
+        if abs(a0) < 1e-10:
+            print(f"debug: stage {stage_idx+1} es sección de primer orden, "
+                  f"Deliyannis no aplica — saltando")
+            continue
+
+        omega_0 = np.sqrt(abs(a2 / a0))
+        Q = np.sqrt(abs(a0 * a2)) / abs(a1)
+
+        # Guardia: Q debe ser > 0.5 para que Deliyannis sea realizable.
+        # 2Q - 1/K debe ser positivo para que R1 sea positivo.
+        if Q <= 0.5:
+            print(f"debug: stage {stage_idx+1} Q={Q:.4f} ≤ 0.5, "
+                  f"Deliyannis no realizable — saltando")
+            continue
 
         # Ganancia K en la frecuencia central 
         # K=1 simplifica el diseño y es el caso más común.
