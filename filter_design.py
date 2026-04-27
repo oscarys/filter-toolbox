@@ -93,24 +93,89 @@ class FilterSpec:
         """Passband ripple ε derived from Ap: ε = sqrt(10^(Ap/10) - 1)."""
         return np.sqrt(10 ** (self.a_p / 10) - 1)
 
+class SectionType(Enum):
+    """
+    Classification of a single biquad / first-order section.
+
+    Determined by inspecting which numerator coefficients are
+    significant (above a small threshold relative to the leading term).
+
+    First-order sections
+    --------------------
+    LOWPASS_1   :  H(s) = b0 / (s + a0)             — num has only constant term
+    HIGHPASS_1  :  H(s) = b1·s / (s + a0)           — num has only s term
+
+    Second-order sections
+    ---------------------
+    LOWPASS_2   :  H(s) = b0 / (s² + …)             — num has only b0
+    BANDPASS    :  H(s) = b1·s / (s² + …)           — num has only b1·s
+    HIGHPASS_2  :  H(s) = b2·s² / (s² + …)         — num has only b2·s²
+    BANDSTOP    :  H(s) = (b2·s² + b0) / (s² + …)  — num has b2·s² and b0
+    ALLPASS     :  num ≈ den (mirrored coefficients)
+    UNKNOWN     :  does not match any of the above patterns
+    """
+    LOWPASS_1  = "LP1"
+    HIGHPASS_1 = "HP1"
+    LOWPASS_2  = "LP2"
+    BANDPASS   = "BP"
+    HIGHPASS_2 = "HP2"
+    BANDSTOP   = "BS"
+    ALLPASS    = "AP"
+    UNKNOWN    = "?"
+
+
 @dataclass
 class TransferFunction:
     """Represents H(s) = num(s) / den(s) as coefficient arrays (descending power)."""
     numerator   : np.ndarray = field(default_factory=lambda: np.array([1.0]))
     denominator : np.ndarray = field(default_factory=lambda: np.array([1.0, 1.0]))
 
-    # Poles, zeros, gain (filled in by compute_poles_zeros)
+    # Poles, zeros, gain
     poles : np.ndarray = field(default_factory=lambda: np.array([]))
     zeros : np.ndarray = field(default_factory=lambda: np.array([]))
     gain  : float = 1.0
 
+    # Set by factored_biquads() — tells synthesise_* what kind of section this is
+    section_type : SectionType = SectionType.UNKNOWN
+
+    # Set by compute_transfer_function() — the global filter type from the spec,
+    # carried down so netlist generators know the full context
+    filter_type  : FilterType  = FilterType.LOWPASS
+
+class ComponentType(Enum):
+    RESISTOR  = "R"
+    CAPACITOR = "C"
+    INDUCTOR  = "L"   # reserved for future use
+
 @dataclass
 class ComponentValue:
-    stage     : int
-    name      : str          # e.g. "R1", "C2"
-    ideal     : float        # Ohms or Farads
-    rounded   : float        # nearest E-series value
-    error_pct : float
+    stage        : int
+    name         : str              # e.g. "R1", "C2"
+    component_type: ComponentType   # RESISTOR or CAPACITOR
+    ideal        : float            # Ohms or Farads
+    rounded      : float            # nearest E-series value
+    error_pct    : float
+
+    def formatted_ideal(self) -> str:
+        """Return ideal value as a human-readable string with SI prefix."""
+        return _si_format(self.ideal, self.component_type)
+
+    def formatted_rounded(self) -> str:
+        """Return rounded value as a human-readable string with SI prefix."""
+        return _si_format(self.rounded, self.component_type)
+
+
+def _si_format(value: float, ctype: ComponentType) -> str:
+    """Format a component value with the appropriate SI prefix and unit."""
+    unit = "Ω" if ctype == ComponentType.RESISTOR else "F"
+    for threshold, prefix in (
+        (1e12, "T"), (1e9, "G"), (1e6, "M"), (1e3, "k"),
+        (1.0,  ""),  (1e-3, "m"), (1e-6, "μ"), (1e-9, "n"),
+        (1e-12, "p"),
+    ):
+        if abs(value) >= threshold:
+            return f"{value / threshold:.4g} {prefix}{unit}"
+    return f"{value:.4g} {unit}"
 
 @dataclass
 class SimulationResult:
@@ -325,11 +390,12 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     # objeto TransferFunction
     # Se necesita los coeficientes para graficar H(jω) y los polos/zeros para el mapa polo-cero.
     tf = TransferFunction(
-        numerator = np.real(num),
+        numerator   = np.real(num),
         denominator = np.real(den),
-        poles = p,
-        zeros = z,
-        gain = float(np.real(k)),
+        poles       = p,
+        zeros       = z,
+        gain        = float(np.real(k)),
+        filter_type = spec.filter_type,   # carry spec context into TF
     )
 
     print(f'debug: orden={n}, polos={p}')
@@ -347,6 +413,76 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
 # ── STUDENT ENTRY POINT 3 ────────────────────────────────────────────────────
 # Biquad / Stage Decomposition
 # ──────────────────────────────────────────────────────────────────────────────
+
+def _classify_section(num: np.ndarray, den: np.ndarray, tol: float = 1e-4) -> SectionType:
+    """
+    Classify a biquad section by inspecting its numerator coefficient pattern.
+
+    Parameters
+    ----------
+    num : np.ndarray  – numerator coefficients [b2, b1, b0] (length ≤ 3)
+    den : np.ndarray  – denominator coefficients [a2, a1, a0] (length ≤ 3)
+    tol : float       – relative threshold below which a coefficient is
+                        considered zero (default 1e-4)
+
+    Returns
+    -------
+    SectionType
+
+    Notes
+    -----
+    Instructor-provided — do NOT modify.
+
+    Numerator patterns (after padding to length 3: [b2, b1, b0]):
+      [0,  0,  *]  →  LOWPASS_2  (only constant term)
+      [0,  *,  0]  →  BANDPASS   (only s term)
+      [*,  0,  0]  →  HIGHPASS_2 (only s² term)
+      [*,  0,  *]  →  BANDSTOP   (s² and constant, no s term)
+      [*,  *,  *]  →  ALLPASS if num ≈ reversed(den), else UNKNOWN
+
+    For first-order sections (den has 2 coefficients):
+      [0,  *]      →  LOWPASS_1
+      [*,  0]      →  HIGHPASS_1
+    """
+    # Normalise to leading coefficient of denominator
+    scale = abs(den[0]) if abs(den[0]) > 1e-30 else 1.0
+
+    order = len(den) - 1   # 1 or 2
+
+    # Pad numerator to match denominator length
+    b = np.zeros(order + 1)
+    b_src = np.real(num)
+    b[-(len(b_src)):] = b_src
+
+    # Relative significance mask
+    sig = np.abs(b) / scale > tol
+
+    if order == 1:
+        # First-order section
+        if sig[0] and not sig[1]:
+            return SectionType.HIGHPASS_1
+        if sig[1] and not sig[0]:
+            return SectionType.LOWPASS_1
+        return SectionType.UNKNOWN
+
+    # Second-order section: sig = [b2_sig, b1_sig, b0_sig]
+    b2, b1, b0 = sig
+    if not b2 and not b1 and b0:
+        return SectionType.LOWPASS_2
+    if not b2 and b1 and not b0:
+        return SectionType.BANDPASS
+    if b2 and not b1 and not b0:
+        return SectionType.HIGHPASS_2
+    if b2 and not b1 and b0:
+        return SectionType.BANDSTOP
+    if b2 and b1 and b0:
+        # Check for allpass: num coefficients ≈ reversed den coefficients
+        den_norm = np.real(den) / den[0]
+        num_norm = b / (b[0] if abs(b[0]) > 1e-30 else 1.0)
+        if np.allclose(num_norm, den_norm[::-1], rtol=tol * 10):
+            return SectionType.ALLPASS
+    return SectionType.UNKNOWN
+
 
 def factored_biquads(tf: TransferFunction) -> list[TransferFunction]:
     """
@@ -372,8 +508,19 @@ def factored_biquads(tf: TransferFunction) -> list[TransferFunction]:
      
     # Factoriza en secciones analógicas de primer y segundo orden 
     sos = sps.tf2sos(tf.numerator, tf.denominator, analog=True)
-    # Genera los objetos TransferFunction para cada seccion
-    sections = [TransferFunction(row[:3], row[3:]) for row in sos]
+
+    # Genera los objetos TransferFunction para cada seccion,
+    # clasificando cada una y propagando el filter_type global.
+    sections = []
+    for row in sos:
+        num, den = row[:3], row[3:]
+        sec = TransferFunction(
+            numerator   = num,
+            denominator = den,
+            section_type = _classify_section(num, den),
+            filter_type  = tf.filter_type,   # carry global context down
+        )
+        sections.append(sec)
 
     # ----- Q-ordering (inline) -----
     def compute_Q(section):
@@ -385,7 +532,12 @@ def factored_biquads(tf: TransferFunction) -> list[TransferFunction]:
                 return np.sqrt(a2) / a1
         return 0.0
 
-    sections = sorted(sections, key = compute_Q)
+    sections = sorted(sections, key=compute_Q)
+
+    for i, s in enumerate(sections):
+        print(f"debug biquad {i+1}: section_type={s.section_type.value}  "
+              f"filter_type={s.filter_type.name}  "
+              f"num={np.round(s.numerator,4)}  den={np.round(s.denominator,4)}")
 
     return sections
 
@@ -482,10 +634,13 @@ def synthesise_sallen_key(
     Notes
     -----
     ── STUDENT CODE ──
-    For each biquad extract ω₀ and Q.  Apply the equal-C (or equal-R) design
-    equations for a unity-gain Sallen-Key LP section.  For HP sections apply
-    the LP→HP dual (swap R↔C roles).
-    Use round_to_eseries() (provided below) to snap to standard values.
+    For each biquad inspect biquad.section_type to determine the circuit:
+      SectionType.LOWPASS_2  → Sallen-Key LP (equal-C design)
+      SectionType.HIGHPASS_2 → Sallen-Key HP (equal-R design, swap R↔C roles)
+      SectionType.LOWPASS_1  → Single RC + voltage follower (1st-order LP)
+      SectionType.HIGHPASS_1 → Single RC + voltage follower (1st-order HP)
+    Also check biquad.filter_type for the global filter context if needed.
+    Use round_to_eseries() to snap to standard values.
     """
     raise NotImplementedError("STUDENT: implement synthesise_sallen_key()")
 
@@ -509,12 +664,16 @@ def synthesise_tow_thomas(
     -----
     ── STUDENT CODE ──
     The UAF42 integrates two lossless integrators and a weighted summer.
+    Inspect biquad.section_type for each stage:
+      SectionType.LOWPASS_2  → tap LP output of UAF42
+      SectionType.BANDPASS   → tap BP output of UAF42
+      SectionType.HIGHPASS_2 → tap HP output of UAF42
+      SectionType.BANDSTOP   → sum LP and HP outputs externally
     For each biquad:
         C₁ = C₂ = C  (user base value)
         R₁ = R₂ = 1 / (ω₀ · C)
         R_q = Q / (ω₀ · C)   (Q-setting resistor)
-    Refer to the Burr-Brown UAF42 datasheet for the full design equations
-    including the optional gain-setting resistors.
+    Refer to the Burr-Brown UAF42 datasheet for full design equations.
     """
     raise NotImplementedError("STUDENT: implement synthesise_tow_thomas()")
 
@@ -536,11 +695,15 @@ def synthesise_deliyannis(
 
     Notes
     -----
-    ── STUDENT CODE ──
-    The Friend (single-amplifier bandpass) biquad uses:
+    ── STUDENT CODE (partially implemented below) ──
+    Inspect biquad.section_type:
+      SectionType.BANDPASS   → classic 2-R 2-C Deliyannis-Friend BP topology
+      SectionType.LOWPASS_2  → Friend LP variant (5 components: 3R 2C)
+      Other types are not directly realisable with this topology — skip or raise.
+    The Friend bandpass biquad (K=1):
         C₁ = C₂ = C
-        R₁ = 1 / (ω₀ · C · (2Q - 1/K))  where K is the gain at ω₀
-        R₂ = Q / (ω₀ · C · K)
+        R₁ = 1 / (ω₀ · C · (2Q - 1))
+        R₂ = Q / (ω₀ · C)
     Refer to Deliyannis (1968) and Wai-Kai Chen "Active Network Analysis" Ch. 6.
     """
     
@@ -610,32 +773,36 @@ def synthesise_deliyannis(
         # Empaquetar en objetos ComponentVae
         # stage_idx+1 porque los stages se numeran desde 1, no desde 0.
         components.append(ComponentValue(
-            stage     = stage_idx + 1,
-            name      = "C1",
-            ideal     = C_ideal,
-            rounded   = C_rounded,
-            error_pct = eseries_error_pct(C_ideal, C_rounded),
+            stage          = stage_idx + 1,
+            name           = "C1",
+            component_type = ComponentType.CAPACITOR,
+            ideal          = C_ideal,
+            rounded        = C_rounded,
+            error_pct      = eseries_error_pct(C_ideal, C_rounded),
         ))
         components.append(ComponentValue(
-            stage     = stage_idx + 1,
-            name      = "C2",
-            ideal     = C_ideal,        # C1 = C2 por diseño
-            rounded   = C_rounded,
-            error_pct = eseries_error_pct(C_ideal, C_rounded),
+            stage          = stage_idx + 1,
+            name           = "C2",
+            component_type = ComponentType.CAPACITOR,
+            ideal          = C_ideal,        # C1 = C2 por diseño
+            rounded        = C_rounded,
+            error_pct      = eseries_error_pct(C_ideal, C_rounded),
         ))
         components.append(ComponentValue(
-            stage     = stage_idx + 1,
-            name      = "R1",
-            ideal     = R1_ideal,
-            rounded   = R1_rounded,
-            error_pct = eseries_error_pct(R1_ideal, R1_rounded),
+            stage          = stage_idx + 1,
+            name           = "R1",
+            component_type = ComponentType.RESISTOR,
+            ideal          = R1_ideal,
+            rounded        = R1_rounded,
+            error_pct      = eseries_error_pct(R1_ideal, R1_rounded),
         ))
         components.append(ComponentValue(
-            stage     = stage_idx + 1,
-            name      = "R2",
-            ideal     = R2_ideal,
-            rounded   = R2_rounded,
-            error_pct = eseries_error_pct(R2_ideal, R2_rounded),
+            stage          = stage_idx + 1,
+            name           = "R2",
+            component_type = ComponentType.RESISTOR,
+            ideal          = R2_ideal,
+            rounded        = R2_rounded,
+            error_pct      = eseries_error_pct(R2_ideal, R2_rounded),
         ))
 
         print(f'debug deliyannis stage {stage_idx+1}: ω₀={omega_0:.2f} rad/s, Q={Q:.4f}, R1={R1_ideal:.2f}Ω, R2={R2_ideal:.2f}Ω, C={C_ideal:.2e}F')
@@ -670,14 +837,27 @@ def generate_spice_netlist(
     Notes
     -----
     ── STUDENT CODE ──
-    Use PySpice's Circuit builder or write the netlist string manually.
+    Each ComponentValue carries:
+      .name            — "R1", "C2", etc.
+      .component_type  — ComponentType.RESISTOR or ComponentType.CAPACITOR
+      .stage           — which biquad stage (1-indexed)
+      .rounded         — the E-series value to use in the netlist
+
+    Use the topology argument to select the correct subcircuit template.
+    Use ic_model to pick the op-amp .lib file from resources/spice_models/.
     Include:
-      * .ac dec 100 1 10Meg   (or appropriate range)
-      * The op-amp sub-circuit model (load from resources/ .lib files)
+      * .ac dec 100 {f_start} {f_stop}
       * Voltage source Vin ac 1
-      * Component instances from the stages
+      * One subcircuit instance per stage, wired in cascade
       * .probe V(out)
     """
+    match topology:
+        case Topology.DELIYANNIS:              
+            for component in components:
+                print(f'debug (oscar) Components: {component.name}{component.stage} = {component.rounded}')
+            print(f'debug (oscar) IC: {ic_model}')
+        case _:
+            print(f'debug (oscar): Topología {topology} aún no implementada')
     raise NotImplementedError("STUDENT: implement generate_spice_netlist()")
 
 
