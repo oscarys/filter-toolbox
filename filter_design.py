@@ -644,8 +644,75 @@ def synthesise_sallen_key(
     Also check biquad.filter_type for the global filter context if needed.
     Use round_to_eseries() to snap to standard values.
     """
-    raise NotImplementedError("STUDENT: implement synthesise_sallen_key()")
+    components: list[ComponentValue] = []
 
+    for stage_index, tf in enumerate(biquads, start = 1):
+        section = tf.section_type
+        filt_type = tf.filter_type
+
+        den = tf.denominator
+
+        #SECOND-ORDER SECTIONS (Sallen-Key)
+        if section in (SectionType.LOWPASS_2, SectionType.HIGHPASS_2):
+            a1 = den[1]
+            a0 = den[2]
+
+            w0 = np.sqrt(a0)
+            Q = w0 / a1
+
+            if section == SectionType.LOWPASS_2:
+                #Equal-C design
+                C1 = C2 = c_base
+                R1 = R2 = 1 / (w0 * C1)
+            else: #HIGHPASS_2
+                #Equal-R design
+                R1 = R2 = r_base
+                C1 = C2 = 1 / (w0 * R1)
+
+            stage_components = [
+                ("R1", ComponentType.RESISTOR, R1, r_series),
+                ("R2", ComponentType.RESISTOR, R2, r_series),
+                ("C1", ComponentType.RESISTOR, C1, c_series),
+                ("C2", ComponentType.RESISTOR, C2, c_series),
+            ]
+        #FIRST-ORDER SECTIONS (RC + buffer)
+        elif section in (SectionType.LOWPASS_1, SectionType.HIGHPASS_1):
+            a0 = den[1]
+            w0 = a0
+
+            if section == SectionType.LOWPASS_1:
+                C = c_base
+                R = 1 / (w0 * C)
+            else: #HIGHPASS_1
+                R = r_base
+                C = 1 / (w0 * R)
+
+            stage_components = [
+                ("R1", ComponentType.RESISTOR, R, r_series),
+                ("C1", ComponentType.RESISTOR, C, c_series),
+            ]
+        else:
+            #Unsupported section types (BP, BS, AP)
+            continue
+    
+        #Rounding and Packing
+        for name, ctype, ideal_value, series in stage_components:
+            rounded_value = round_to_eseries(ideal_value, series)
+            error = eseries_error_pct(ideal_value, rounded_value)
+
+            components.append(
+                ComponentValue(
+                    stage = stage_index,
+                    name = name,
+                    component_type = ctype,
+                    ideal = ideal_value,
+                    rounded = rounded_value,
+                    error_pct = error,
+                    section_type = section,
+                    filter_type = filt_type,
+                )
+            )
+    return components 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ── STUDENT ENTRY POINT 6 ────────────────────────────────────────────────────
