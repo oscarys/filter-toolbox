@@ -911,13 +911,24 @@ def generate_spice_netlist(
       * Op-amp subcircuit from resources/spice_models/{ic_model}.lib
       * .probe V(out)
     """
-    match topology:
-        case Topology.DELIYANNIS:              
-            for component in components:
-                print(f'debug (oscar) Components: {component.name}{component.stage} = {component.rounded}')
-            print(f'debug (oscar) IC: {ic_model}')
-        case _:
-            print(f'debug (oscar): Topología {topology} aún no implementada')
+
+    # Netlist string
+    netlist = f'*Filtro {topology} {components[0].section_type}'
+
+    # Group components by stage in a dictionary
+    stages = {s: list(g) for s, g in groupby(components, key=lambda c: c.stage)}
+    for stage, components in stages.items():
+        print(f'Etapa {stage}:')
+        for component in components:
+            print(f'{component.name}{component.stage} / {component.component_type} /{component.rounded}')
+
+    # match topology:
+    #     case Topology.DELIYANNIS:              
+    #         for component in components:
+    #             print(f'debug (oscar) Components: {component.name}{component.stage} = {component.rounded}')
+    #         print(f'debug (oscar) IC: {ic_model}')
+    #     case _:
+    #         print(f'debug (oscar): Topología {topology} aún no implementada')
     raise NotImplementedError("STUDENT: implement generate_spice_netlist()")
 
 
