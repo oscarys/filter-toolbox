@@ -263,7 +263,7 @@ class MainWindow(QMainWindow):
         self.lblCBase.setText(t("lbl_c_base"))
 
         self.tblComponents.setHorizontalHeaderLabels([
-            t("tbl_stage"), t("tbl_component"),
+            t("tbl_stage"), t("tbl_type"), t("tbl_component"),
             t("tbl_ideal"), t("tbl_rounded"), t("tbl_error"),
         ])
 
@@ -539,14 +539,23 @@ class MainWindow(QMainWindow):
         tbl = self.tblComponents
         tbl.setRowCount(len(components))
         for row, c in enumerate(components):
+            # Stage
             tbl.setItem(row, 0, QTableWidgetItem(str(c.stage)))
-            tbl.setItem(row, 1, QTableWidgetItem(c.name))
-            tbl.setItem(row, 2, QTableWidgetItem(f"{c.ideal:.6g}"))
-            tbl.setItem(row, 3, QTableWidgetItem(f"{c.rounded:.6g}"))
-            err_item = QTableWidgetItem(f"{c.error_pct:+.2f}")
+            # Type badge  (R / C)
+            type_item = QTableWidgetItem(c.component_type.value)
+            type_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            tbl.setItem(row, 1, type_item)
+            # Name
+            tbl.setItem(row, 2, QTableWidgetItem(c.name))
+            # Ideal value — SI formatted
+            tbl.setItem(row, 3, QTableWidgetItem(c.formatted_ideal()))
+            # Rounded value — SI formatted
+            tbl.setItem(row, 4, QTableWidgetItem(c.formatted_rounded()))
+            # Error %
+            err_item = QTableWidgetItem(f"{c.error_pct:+.2f} %")
             if abs(c.error_pct) > 5.0:
                 err_item.setForeground(pg.mkColor("#ff6b6b"))
-            tbl.setItem(row, 4, err_item)
+            tbl.setItem(row, 5, err_item)
         tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
     # ── Export ────────────────────────────────────────────────────────────────

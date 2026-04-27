@@ -429,20 +429,23 @@
          <layout class="QVBoxLayout" name="layoutComp">
           <item>
            <widget class="QTableWidget" name="tblComponents">
-            <property name="columnCount"><number>5</number></property>
+            <property name="columnCount"><number>6</number></property>
             <attribute name="horizontalHeaderItem" column="0">
              <item><property name="text"><string>Stage</string></property></item>
             </attribute>
             <attribute name="horizontalHeaderItem" column="1">
-             <item><property name="text"><string>Component</string></property></item>
+             <item><property name="text"><string>Type</string></property></item>
             </attribute>
             <attribute name="horizontalHeaderItem" column="2">
-             <item><property name="text"><string>Ideal Value</string></property></item>
+             <item><property name="text"><string>Component</string></property></item>
             </attribute>
             <attribute name="horizontalHeaderItem" column="3">
-             <item><property name="text"><string>Rounded (E-series)</string></property></item>
+             <item><property name="text"><string>Ideal Value</string></property></item>
             </attribute>
             <attribute name="horizontalHeaderItem" column="4">
+             <item><property name="text"><string>Rounded (E-series)</string></property></item>
+            </attribute>
+            <attribute name="horizontalHeaderItem" column="5">
              <item><property name="text"><string>Error (%)</string></property></item>
             </attribute>
            </widget>

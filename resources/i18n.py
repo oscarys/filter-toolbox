@@ -86,6 +86,7 @@ STRINGS = {
 
         # Component table headers
         "tbl_stage":            "Stage",
+        "tbl_type":             "Type",
         "tbl_component":        "Component",
         "tbl_ideal":            "Ideal Value",
         "tbl_rounded":          "Rounded (E-series)",
@@ -224,6 +225,7 @@ STRINGS = {
 
         # Component table headers
         "tbl_stage":            "Etapa",
+        "tbl_type":             "Tipo",
         "tbl_component":        "Componente",
         "tbl_ideal":            "Valor Ideal",
         "tbl_rounded":          "Redondeado (Serie E)",
