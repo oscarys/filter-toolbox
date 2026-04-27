@@ -149,12 +149,14 @@ class ComponentType(Enum):
 
 @dataclass
 class ComponentValue:
-    stage        : int
-    name         : str              # e.g. "R1", "C2"
-    component_type: ComponentType   # RESISTOR or CAPACITOR
-    ideal        : float            # Ohms or Farads
-    rounded      : float            # nearest E-series value
-    error_pct    : float
+    stage          : int
+    name           : str              # e.g. "R1", "C2"
+    component_type : ComponentType    # RESISTOR or CAPACITOR
+    ideal          : float            # Ohms or Farads
+    rounded        : float            # nearest E-series value
+    error_pct      : float
+    section_type   : SectionType  = SectionType.UNKNOWN   # LP2, BP, HP2, etc.
+    filter_type    : FilterType   = FilterType.LOWPASS     # global filter context
 
     def formatted_ideal(self) -> str:
         """Return ideal value as a human-readable string with SI prefix."""
@@ -770,40 +772,24 @@ def synthesise_deliyannis(
         R1_rounded = round_to_eseries(R1_ideal, r_series)
         R2_rounded = round_to_eseries(R2_ideal, r_series)
 
-        # Empaquetar en objetos ComponentVae
+        # Empaquetar en objetos ComponentValue
         # stage_idx+1 porque los stages se numeran desde 1, no desde 0.
-        components.append(ComponentValue(
-            stage          = stage_idx + 1,
-            name           = "C1",
-            component_type = ComponentType.CAPACITOR,
-            ideal          = C_ideal,
-            rounded        = C_rounded,
-            error_pct      = eseries_error_pct(C_ideal, C_rounded),
-        ))
-        components.append(ComponentValue(
-            stage          = stage_idx + 1,
-            name           = "C2",
-            component_type = ComponentType.CAPACITOR,
-            ideal          = C_ideal,        # C1 = C2 por diseño
-            rounded        = C_rounded,
-            error_pct      = eseries_error_pct(C_ideal, C_rounded),
-        ))
-        components.append(ComponentValue(
-            stage          = stage_idx + 1,
-            name           = "R1",
-            component_type = ComponentType.RESISTOR,
-            ideal          = R1_ideal,
-            rounded        = R1_rounded,
-            error_pct      = eseries_error_pct(R1_ideal, R1_rounded),
-        ))
-        components.append(ComponentValue(
-            stage          = stage_idx + 1,
-            name           = "R2",
-            component_type = ComponentType.RESISTOR,
-            ideal          = R2_ideal,
-            rounded        = R2_rounded,
-            error_pct      = eseries_error_pct(R2_ideal, R2_rounded),
-        ))
+        for name, ctype, ideal, rounded in (
+            ("C1", ComponentType.CAPACITOR, C_ideal,  C_rounded),
+            ("C2", ComponentType.CAPACITOR, C_ideal,  C_rounded),
+            ("R1", ComponentType.RESISTOR,  R1_ideal, R1_rounded),
+            ("R2", ComponentType.RESISTOR,  R2_ideal, R2_rounded),
+        ):
+            components.append(ComponentValue(
+                stage          = stage_idx + 1,
+                name           = name,
+                component_type = ctype,
+                ideal          = ideal,
+                rounded        = rounded,
+                error_pct      = eseries_error_pct(ideal, rounded),
+                section_type   = biquad.section_type,
+                filter_type    = biquad.filter_type,
+            ))
 
         print(f'debug deliyannis stage {stage_idx+1}: ω₀={omega_0:.2f} rad/s, Q={Q:.4f}, R1={R1_ideal:.2f}Ω, R2={R2_ideal:.2f}Ω, C={C_ideal:.2e}F')
 
@@ -842,13 +828,23 @@ def generate_spice_netlist(
       .component_type  — ComponentType.RESISTOR or ComponentType.CAPACITOR
       .stage           — which biquad stage (1-indexed)
       .rounded         — the E-series value to use in the netlist
+      .section_type    — SectionType.LP2 / BP / HP2 / BS / LP1 / HP1 etc.
+      .filter_type     — FilterType.LOWPASS / BANDPASS / etc. (global context)
 
-    Use the topology argument to select the correct subcircuit template.
-    Use ic_model to pick the op-amp .lib file from resources/spice_models/.
-    Include:
+    Suggested approach:
+      1. Group components by stage:
+             from itertools import groupby
+             stages = {s: list(g) for s, g in groupby(components, key=lambda c: c.stage)}
+      2. For each stage, read stages[s][0].section_type to pick the subcircuit
+         template (LP Sallen-Key, BP Deliyannis, etc.)
+      3. Within the stage, identify each component by .name ("R1", "C1", …)
+         and use .rounded as the value in the netlist line.
+      4. Wire stages in cascade: out of stage N → in of stage N+1.
+
+    Include in the netlist:
       * .ac dec 100 {f_start} {f_stop}
       * Voltage source Vin ac 1
-      * One subcircuit instance per stage, wired in cascade
+      * Op-amp subcircuit from resources/spice_models/{ic_model}.lib
       * .probe V(out)
     """
     match topology:
