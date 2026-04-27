@@ -20,6 +20,7 @@ import scipy.signal as sps
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional
+from itertools import groupby
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -321,21 +322,18 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     # ellipap recibe rp y rs ambos en dB 
 
     match spec.approximation:
-    	case Approximation.BUTTERWORTH:
-    #respuesta maximalmente plana 
-        	z, p, k = sps.buttap(n)
-
-    	case Approximation.CHEBYSHEV_I:
-    # rp = rizado máximo en la banda de paso en dB
-        	z, p, k = sps.cheb1ap(n, rp=spec.a_p)
-
-    	case Approximation.CHEBYSHEV_II:
-    # rs = atenuación mínima en la banda de rechazo en dB
-        	z, p, k = sps.cheb2ap(n, rs=spec.a_s)
-
-    	case Approximation.ELLIPTIC:
-    # Necesita ambos: rizado en paso y atenuación en rechazo
-        	z, p, k = sps.ellipap(n, rp=spec.a_p, rs=spec.a_s)
+        case Approximation.BUTTERWORTH:
+            #respuesta maximalmente plana 
+            z, p, k = sps.buttap(n)
+        case Approximation.CHEBYSHEV_I:
+            # rp = rizado máximo en la banda de paso en dB
+            z, p, k = sps.cheb1ap(n, rp=spec.a_p)
+        case Approximation.CHEBYSHEV_II:
+            # rs = atenuación mínima en la banda de rechazo en dB
+            z, p, k = sps.cheb2ap(n, rs=spec.a_s)
+        case Approximation.ELLIPTIC:
+            # Necesita ambos: rizado en paso y atenuación en rechazo
+            z, p, k = sps.ellipap(n, rp=spec.a_p, rs=spec.a_s)
 
     # TRANSFORMACION DE FRECUENCIA LP a {LP,HP,BP,BS}, AQUI SE OBTIENEN FRECUENCIAS DE CORTE 
     # Usamos z,p,k en lugar de polinomios para hacerlo mas estable con ordenes altos
@@ -345,31 +343,30 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     # lp2bs_zpk: inverso del BP ,  rechazo en el centro
 
     match spec.filter_type : 
-    	case FilterType.LOWPASS: 
-    # Frecuencia de corte: omega_p del usuario
-    		z, p, k = sps.lp2lp_zpk(z, p, k, wo=spec.omega_p)
-
-    	case FilterType.HIGHPASS:
-    # Frecuencia de giro: omega_p. scipy hace s a omega_p/s internamente,
-    # que es la inversión del eje de frecuencias que ya vimos en el orden.
-    		z, p, k = sps.lp2hp_zpk(z, p, k, wo=spec.omega_p)
-
-    	case FilterType.BANDPASS:
-    # Necesitamos la frecuencia central geométrica "(f0) es el punto central de una banda de paso 
-    # calculado mediante la media geométrica de las frecuencias límite inferior (f1) y superior (f2)
-    # A diferencia de una media aritmética simple, la media geométrica proporciona un valor intermedio proporcional en escalas logarítmicas
-    # lo que la hace fundamental para el diseño de filtros y el análisis de espectro y el ancho de banda."
-    # Se usa geométrica porque el filtro es simétrico en escala logarítmica.
-    		omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)  # frec. central
-    		BW = spec.omega_p2 - spec.omega_p            # ancho de banda
-    		z, p, k = sps.lp2bp_zpk(z, p, k, wo=omega_0, bw=BW)
-
-    	case FilterType.BANDSTOP:
-    # Mismo cálculo de omega_0 y BW que BP,
-    # pero la transformación pone el rechazo en el centro.
-    		omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
-    		BW = spec.omega_p2 - spec.omega_p
-    		z, p, k = sps.lp2bs_zpk(z, p, k, wo=omega_0, bw=BW)
+        case FilterType.LOWPASS:
+            # Frecuencia de corte: omega_p del usuario
+            z, p, k = sps.lp2lp_zpk(z, p, k, wo=spec.omega_p)
+        case FilterType.HIGHPASS:
+            # Frecuencia de giro: omega_p. scipy hace s a omega_p/s internamente,
+            # # que es la inversión del eje de frecuencias que ya vimos en el orden.
+            z, p, k = sps.lp2hp_zpk(z, p, k, wo=spec.omega_p)
+        case FilterType.BANDPASS:
+            # Necesitamos la frecuencia central geométrica "(f0) es el punto central de una banda de paso
+            # calculado mediante la media geométrica de las frecuencias límite inferior (f1) y superior (f2)
+            # A diferencia de una media aritmética simple, la media geométrica proporciona un valor intermedio proporcional en escalas logarítmicas
+            # lo que la hace fundamental para el diseño de filtros y el análisis de espectro y el ancho de banda."
+            # Se usa geométrica porque el filtro es simétrico en escala logarítmica.
+            omega_0 = np.sqrt(spec.omega_p * spec.omega_p2) 
+            # frec. central
+            BW = spec.omega_p2 - spec.omega_p
+            # ancho de banda
+            z, p, k = sps.lp2bp_zpk(z, p, k, wo=omega_0, bw=BW)
+        case FilterType.BANDSTOP:
+            # Mismo cálculo de omega_0 y BW que BP,
+            # pero la transformación pone el rechazo en el centro.
+            omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
+            BW = spec.omega_p2 - spec.omega_p
+            z, p, k = sps.lp2bs_zpk(z, p, k, wo=omega_0, bw=BW)
 
     
 
