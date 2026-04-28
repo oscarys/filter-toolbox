@@ -77,6 +77,7 @@ STRINGS = {
         "topo_sk":              "Sallen-Key",
         "topo_tt":              "Tow-Thomas (UAF42)",
         "topo_del":             "Deliyannis-Friend",
+        "topo_del_disabled_hp": "Deliyannis-Friend is not available for High-pass filters",
 
         # Passive components
         "lbl_r_series":         "Resistor Series (E-series)",
@@ -216,8 +217,7 @@ STRINGS = {
         "topo_sk":              "Sallen-Key",
         "topo_tt":              "Tow-Thomas (UAF42)",
         "topo_del":             "Deliyannis-Friend",
-
-        # Passive components
+        "topo_del_disabled_hp": "Deliyannis-Friend no está disponible para filtros pasa-altas",
         "lbl_r_series":         "Serie de resistores (E)",
         "lbl_c_series":         "Serie de capacitores (E)",
         "lbl_r_base":           "Resistor base (Ω)",
