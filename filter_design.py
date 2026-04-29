@@ -321,21 +321,21 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     # ellipap recibe rp y rs ambos en dB 
 
     match spec.approximation:
-    	case Approximation.BUTTERWORTH:
+        case Approximation.BUTTERWORTH:
     #respuesta maximalmente plana 
-        	z, p, k = sps.buttap(n)
+            z, p, k = sps.buttap(n)
 
-    	case Approximation.CHEBYSHEV_I:
+        case Approximation.CHEBYSHEV_I:
     # rp = rizado máximo en la banda de paso en dB
-        	z, p, k = sps.cheb1ap(n, rp=spec.a_p)
+            z, p, k = sps.cheb1ap(n, rp=spec.a_p)
 
-    	case Approximation.CHEBYSHEV_II:
+        case Approximation.CHEBYSHEV_II:
     # rs = atenuación mínima en la banda de rechazo en dB
-        	z, p, k = sps.cheb2ap(n, rs=spec.a_s)
+            z, p, k = sps.cheb2ap(n, rs=spec.a_s)
 
-    	case Approximation.ELLIPTIC:
+        case Approximation.ELLIPTIC:
     # Necesita ambos: rizado en paso y atenuación en rechazo
-        	z, p, k = sps.ellipap(n, rp=spec.a_p, rs=spec.a_s)
+            z, p, k = sps.ellipap(n, rp=spec.a_p, rs=spec.a_s)
 
     # TRANSFORMACION DE FRECUENCIA LP a {LP,HP,BP,BS}, AQUI SE OBTIENEN FRECUENCIAS DE CORTE 
     # Usamos z,p,k en lugar de polinomios para hacerlo mas estable con ordenes altos
@@ -345,31 +345,31 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
     # lp2bs_zpk: inverso del BP ,  rechazo en el centro
 
     match spec.filter_type : 
-    	case FilterType.LOWPASS: 
+        case FilterType.LOWPASS: 
     # Frecuencia de corte: omega_p del usuario
-    		z, p, k = sps.lp2lp_zpk(z, p, k, wo=spec.omega_p)
+            z, p, k = sps.lp2lp_zpk(z, p, k, wo=spec.omega_p)
 
-    	case FilterType.HIGHPASS:
+        case FilterType.HIGHPASS:
     # Frecuencia de giro: omega_p. scipy hace s a omega_p/s internamente,
     # que es la inversión del eje de frecuencias que ya vimos en el orden.
-    		z, p, k = sps.lp2hp_zpk(z, p, k, wo=spec.omega_p)
+            z, p, k = sps.lp2hp_zpk(z, p, k, wo=spec.omega_p)
 
-    	case FilterType.BANDPASS:
+        case FilterType.BANDPASS:
     # Necesitamos la frecuencia central geométrica "(f0) es el punto central de una banda de paso 
     # calculado mediante la media geométrica de las frecuencias límite inferior (f1) y superior (f2)
     # A diferencia de una media aritmética simple, la media geométrica proporciona un valor intermedio proporcional en escalas logarítmicas
     # lo que la hace fundamental para el diseño de filtros y el análisis de espectro y el ancho de banda."
     # Se usa geométrica porque el filtro es simétrico en escala logarítmica.
-    		omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)  # frec. central
-    		BW = spec.omega_p2 - spec.omega_p            # ancho de banda
-    		z, p, k = sps.lp2bp_zpk(z, p, k, wo=omega_0, bw=BW)
+            omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)  # frec. central
+            BW = spec.omega_p2 - spec.omega_p            # ancho de banda
+            z, p, k = sps.lp2bp_zpk(z, p, k, wo=omega_0, bw=BW)
 
-    	case FilterType.BANDSTOP:
+        case FilterType.BANDSTOP:
     # Mismo cálculo de omega_0 y BW que BP,
     # pero la transformación pone el rechazo en el centro.
-    		omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
-    		BW = spec.omega_p2 - spec.omega_p
-    		z, p, k = sps.lp2bs_zpk(z, p, k, wo=omega_0, bw=BW)
+            omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
+            BW = spec.omega_p2 - spec.omega_p
+            z, p, k = sps.lp2bs_zpk(z, p, k, wo=omega_0, bw=BW)
 
     
 
@@ -712,13 +712,191 @@ def synthesise_deliyannis(
     components = []  # lista donde acumulamos todos los componentes
 
     for stage_idx, biquad in enumerate(biquads):
-        den = biquad.denominator  # coeficientes [a0, a1, a2] del denominador
+        stage = stage_idx + 1
+        den = np.asarray (biquad.denominator, dtype=float)  # coeficientes [a0, a1, a2] del denominador
+    
+    # Para secciones de primer orden
+        if len(den) == 2:
+            a0, a1 = den 
+
+        if abs(a0) < 1e-12:
+            continue
+
+    omega_c  = abs(a1/a0)
+
+    C = c_base
+    C_r = round_to_eseries(C, c_series)
+
+    R = 1 / (omega_c * C)
+    R_r = round_to_eseries(R, r_series)
+
+    components.append(ComponentValue(
+                stage=stage,
+                name="C1",
+                component_type=ComponentType.CAPACITOR,
+                ideal=C,
+                rounded=C_r,
+                error_pct=eseries_error_pct(C, C_r),
+                section_type=biquad.section_type,
+                filter_type=biquad.filter_type,
+            ))
+
+    components.append(ComponentValue(
+                stage=stage,
+                name="R1",
+                component_type=ComponentType.RESISTOR,
+                ideal=R,
+                rounded=R_r,
+                error_pct=eseries_error_pct(R, R_r),
+                section_type=biquad.section_type,
+                filter_type=biquad.filter_type,
+            ))
+
+    print(f"debug stage {stage}: 1er orden ωc={omega_c:.2f}")
+    continue
+
+    # =====================================================
+        # SEGUNDO ORDEN
+        # =====================================================
+    if len(den) < 3:
+            continue
+
+    a0, a1, a2 = den
+
+    if abs(a0) < 1e-12:
+        continue
+
+        omega_0 = np.sqrt(abs(a2 / a0))
+        Q = np.sqrt(abs(a0 * a2)) / abs(a1)
+
+        C = c_base
+        C_r = round_to_eseries(C, c_series)
+
+    # =====================================================
+        # CASO Q BAJO → DESCOMPONER
+        # =====================================================
+        if Q <= 0.5:
+            poles = np.roots(den)
+
+            print(f"debug stage {stage}: Q={Q:.3f} → polos reales")
+
+            for i, p in enumerate(poles, start=1):
+
+                if np.real(p) >= 0:
+                    continue
+
+                omega_c = abs(np.real(p))
+
+                R = 1 / (omega_c * C)
+                R_r = round_to_eseries(R, r_series)
+
+                components.append(ComponentValue(
+                    stage=stage,
+                    name=f"C{i}",
+                    component_type=ComponentType.CAPACITOR,
+                    ideal=C,
+                    rounded=C_r,
+                    error_pct=eseries_error_pct(C, C_r),
+                    section_type=biquad.section_type,
+                    filter_type=biquad.filter_type,
+                ))
+
+                components.append(ComponentValue(
+                    stage=stage,
+                    name=f"R{i}",
+                    component_type=ComponentType.RESISTOR,
+                    ideal=R,
+                    rounded=R_r,
+                    error_pct=eseries_error_pct(R, R_r),
+                    section_type=biquad.section_type,
+                    filter_type=biquad.filter_type,
+                ))
+                    continue
+
+    # =====================================================
+        # BANDPASS (CLÁSICO DELIYANNIS)
+        # =====================================================
+        if biquad.section_type == SectionType.BANDPASS:
+
+            R1 = 1 / (omega_0 * C * (2*Q - 1))
+            R2 = Q / (omega_0 * C)
+
+            R1_r = round_to_eseries(R1, r_series)
+            R2_r = round_to_eseries(R2, r_series)
+
+            for name, val, val_r, ctype in (
+                ("C1", C,  C_r, ComponentType.CAPACITOR),
+                ("C2", C,  C_r, ComponentType.CAPACITOR),
+                ("R1", R1, R1_r, ComponentType.RESISTOR),
+                ("R2", R2, R2_r, ComponentType.RESISTOR),
+            ):
+                components.append(ComponentValue(
+                    stage=stage,
+                    name=name,
+                    component_type=ctype,
+                    ideal=val,
+                    rounded=val_r,
+                    error_pct=eseries_error_pct(val, val_r),
+                    section_type=biquad.section_type,
+                    filter_type=biquad.filter_type,
+                ))
+
+            print(f"debug stage {stage}: BP ω0={omega_0:.2f}, Q={Q:.2f}")
+
+    # =====================================================
+        # LOWPASS 
+        # =====================================================
+        elif biquad.section_type == SectionType.LOWPASS_2:
+
+            R1 = Q / (omega_0 * C)
+            R2 = 1 / (omega_0 * C * Q)
+
+            R1_r = round_to_eseries(R1, r_series)
+            R2_r = round_to_eseries(R2, r_series)
+
+            for name, val, val_r, ctype in (
+                ("C1", C,  C_r, ComponentType.CAPACITOR),
+                ("C2", C,  C_r, ComponentType.CAPACITOR),
+                ("R1", R1, R1_r, ComponentType.RESISTOR),
+                ("R2", R2, R2_r, ComponentType.RESISTOR),
+            ):
+                components.append(ComponentValue(
+                    stage=stage,
+                    name=name,
+                    component_type=ctype,
+                    ideal=val,
+                    rounded=val_r,
+                    error_pct=eseries_error_pct(val, val_r),
+                    section_type=biquad.section_type,
+                    filter_type=biquad.filter_type,
+                ))
+
+            print(f"debug stage {stage}: LP ω0={omega_0:.2f}, Q={Q:.2f}")
+
+        else:
+            print(f"debug stage {stage}: tipo no implementado en Deliyannis")
+
+    return components
+
+
+
+    #omega_0 = np.sqrt(abs(a2/a0))
+    #Q = np.sqrt(abs(a0 * a2)) / abs(a1)
+
+    #C = c_base 
+    #C_r = round_to_eseries(C, c_series) 
+
+        # Para Q bajo: polos eales
+    #if Q <= 0.5: 
+        #poles = np.roots(den)
+
+        
 
         # Verificar que es una sección de segundo orden 
         # Deliyannis-Friend solo aplica a biquads de 2do orden (bandpass).
         # Secciones de primer orden las saltamos.
-        if len(den) < 3:
-            continue
+       # if len(den) < 3:
+           # continue
 
         # Extraer ω₀ y Q del denominador
         # El denominador normalizado de un biquad analógico es:
@@ -729,71 +907,71 @@ def synthesise_deliyannis(
         #   ω₀ = sqrt(a2/a0)
         #   Q  = sqrt(a0·a2) / a1
 
-        a0 = den[0]
-        a1 = den[1]
-        a2 = den[2]
+       # a0 = den[0]
+       # a1 = den[1]
+       # a2 = den[2]
 
         # Guardia: si a0 es cero o muy pequeño, es una sección de primer orden
         # disfrazada de segundo orden. Deliyannis-Friend no aplica aquí.
-        if abs(a0) < 1e-10:
-            print(f"debug: stage {stage_idx+1} es sección de primer orden, "
-                  f"Deliyannis no aplica — saltando")
-            continue
+       # if abs(a0) < 1e-10:
+        #    print(f"debug: stage {stage_idx+1} es sección de primer orden, "
+         #         f"Deliyannis no aplica — saltando")
+          #  continue
 
-        omega_0 = np.sqrt(abs(a2 / a0))
-        Q = np.sqrt(abs(a0 * a2)) / abs(a1)
+       # omega_0 = np.sqrt(abs(a2 / a0))
+       # Q = np.sqrt(abs(a0 * a2)) / abs(a1)
 
         # Guardia: Q debe ser > 0.5 para que Deliyannis sea realizable.
         # 2Q - 1/K debe ser positivo para que R1 sea positivo.
-        if Q <= 0.5:
-            print(f"debug: stage {stage_idx+1} Q={Q:.4f} ≤ 0.5, "
-                  f"Deliyannis no realizable — saltando")
-            continue
+       # if Q <= 0.5:
+        #    print(f"debug: stage {stage_idx+1} Q={Q:.4f} ≤ 0.5, "
+         #         f"Deliyannis no realizable — saltando")
+          #  continue
 
         # Ganancia K en la frecuencia central 
         # K=1 simplifica el diseño y es el caso más común.
         # Con K=1: R₁ = 1/(ω₀·C·(2Q-1)), R₂ = Q/(ω₀·C)
         # 2Q-1 debe ser > 0, lo que se cumple siempre que Q > 0.5
         # (para filtros bandpass bien diseñados Q >> 0.5).
-        K = 1.0
+       # K = 1.0
 
         # Cálculo de capacitore
         # Ambos capacitores son iguales y usan el valor base del usuario.
         # El usuario puede elegir E series para redondear al valor estándar.
-        C_ideal   = c_base
-        C_rounded = round_to_eseries(C_ideal, c_series)
+        #C_ideal   = c_base
+        #C_rounded = round_to_eseries(C_ideal, c_series)
 
         # Cálculo de resistores
         # R1: resistor de entrada, controla la ganancia y el ancho de banda
         # R2: resistor de realimentación, controla el Q y la ganancia
-        R1_ideal = 1.0 / (omega_0 * C_ideal * (2*Q - 1.0/K))
-        R2_ideal = Q   / (omega_0 * C_ideal * K)
+        #R1_ideal = 1.0 / (omega_0 * C_ideal * (2*Q - 1.0/K))
+        #R2_ideal = Q   / (omega_0 * C_ideal * K)
 
-        R1_rounded = round_to_eseries(R1_ideal, r_series)
-        R2_rounded = round_to_eseries(R2_ideal, r_series)
+       # R1_rounded = round_to_eseries(R1_ideal, r_series)
+        #R2_rounded = round_to_eseries(R2_ideal, r_series)
 
         # Empaquetar en objetos ComponentValue
         # stage_idx+1 porque los stages se numeran desde 1, no desde 0.
-        for name, ctype, ideal, rounded in (
-            ("C1", ComponentType.CAPACITOR, C_ideal,  C_rounded),
-            ("C2", ComponentType.CAPACITOR, C_ideal,  C_rounded),
-            ("R1", ComponentType.RESISTOR,  R1_ideal, R1_rounded),
-            ("R2", ComponentType.RESISTOR,  R2_ideal, R2_rounded),
-        ):
-            components.append(ComponentValue(
-                stage          = stage_idx + 1,
-                name           = name,
-                component_type = ctype,
-                ideal          = ideal,
-                rounded        = rounded,
-                error_pct      = eseries_error_pct(ideal, rounded),
-                section_type   = biquad.section_type,
-                filter_type    = biquad.filter_type,
-            ))
+        #for name, ctype, ideal, rounded in (
+         #   ("C1", ComponentType.CAPACITOR, C_ideal,  C_rounded),
+          #  ("C2", ComponentType.CAPACITOR, C_ideal,  C_rounded),
+           # ("R1", ComponentType.RESISTOR,  R1_ideal, R1_rounded),
+           # ("R2", ComponentType.RESISTOR,  R2_ideal, R2_rounded),
+       # ):
+        #    components.append(ComponentValue(
+         #       stage          = stage_idx + 1,
+          #      name           = name,
+           #     component_type = ctype,
+            #    ideal          = ideal,
+             #   rounded        = rounded,
+              #  error_pct      = eseries_error_pct(ideal, rounded),
+               # section_type   = biquad.section_type,
+                #filter_type    = biquad.filter_type,
+           # ))
 
-        print(f'debug deliyannis stage {stage_idx+1}: ω₀={omega_0:.2f} rad/s, Q={Q:.4f}, R1={R1_ideal:.2f}Ω, R2={R2_ideal:.2f}Ω, C={C_ideal:.2e}F')
+       # print(f'debug deliyannis stage {stage_idx+1}: ω₀={omega_0:.2f} rad/s, Q={Q:.4f}, R1={R1_ideal:.2f}Ω, R2={R2_ideal:.2f}Ω, C={C_ideal:.2e}F')
 
-    return components
+   # return components
     #raise NotImplementedError("STUDENT: implement synthesise_deliyannis()")
 
 
