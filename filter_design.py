@@ -641,75 +641,173 @@ def synthesise_sallen_key(
     Also check biquad.filter_type for the global filter context if needed.
     Use round_to_eseries() to snap to standard values.
     """
-    components: list[ComponentValue] = []
+    components = []
 
-    for stage_index, tf in enumerate(biquads, start = 1):
-        section = tf.section_type
-        filt_type = tf.filter_type
+    for stage_idx, biquad in enumerate(biquads):
+        stage_num = stage_idx + 1
+        ftype = biquad.filter_type
 
-        den = tf.denominator
+        #Limpiar el denominador de ceros lideres
+        num_work = np.array(biquad.numerator, dtype = float)
+        den_work = np.array(biquad.denominator, dtype = float)
+       
+        while len(den_work) > 1 and abs(den_work[0]) < 1e-20:
+            den_work = den_work[1:]
+            num_work = num_work[1:]
 
-        #SECOND-ORDER SECTIONS (Sallen-Key)
-        if section in (SectionType.LOWPASS_2, SectionType.HIGHPASS_2):
-            a1 = den[1]
-            a0 = den[2]
+        #Reclasifica la seccion con los arrays limpios
+        #Necesario cuando el biquad venia con cero lider y section_type incorrecto
+        stype = _classify_section(num_work, den_work)
 
-            w0 = np.sqrt(a0)
-            Q = w0 / a1
+        #Normaliza coeficiente lider del denominador a 1
+        den = den_work / den_work[0]
+        
+        if stype == SectionType.LOWPASS_2:
+            # Sallen-Key Pasa Bajas - Diseño de igual C
+            
+            a1 = den[-2]
+            a0 = den[-1]
 
-            if section == SectionType.LOWPASS_2:
-                #Equal-C design
-                C1 = C2 = c_base
-                R1 = R2 = 1 / (w0 * C1)
-            else: #HIGHPASS_2
-                #Equal-R design
-                R1 = R2 = r_base
-                C1 = C2 = 1 / (w0 * R1)
+            C = c_base
+            P = 1.0 / (a0 * C**2) #Producto R1 y R2
+            S = a1 / (a0 * C)     #Suma R1 y R2
 
-            stage_components = [
-                ("R1", ComponentType.RESISTOR, R1, r_series),
-                ("R2", ComponentType.RESISTOR, R2, r_series),
-                ("C1", ComponentType.RESISTOR, C1, c_series),
-                ("C2", ComponentType.RESISTOR, C2, c_series),
+            discriminant = max(S**2 - 4*P, 0.0) #Sujetar ruido numerico
+
+            R1_ideal = (S + np.sqrt(discriminant)) / 2.0
+            R2_ideal = (S - np.sqrt(discriminant)) / 2.0
+            C1_ideal = C
+            C2_ideal = C
+
+            componentes_etapa = [
+                ("R1", ComponentType.RESISTOR, R1_ideal),
+                ("R2", ComponentType.RESISTOR, R2_ideal),
+                ("C1", ComponentType.CAPACITOR, C1_ideal),
+                ("C2", ComponentType.CAPACITOR, C2_ideal),
             ]
-        #FIRST-ORDER SECTIONS (RC + buffer)
-        elif section in (SectionType.LOWPASS_1, SectionType.HIGHPASS_1):
-            a0 = den[1]
-            w0 = a0
 
-            if section == SectionType.LOWPASS_1:
-                C = c_base
-                R = 1 / (w0 * C)
-            else: #HIGHPASS_1
-                R = r_base
-                C = 1 / (w0 * R)
+        elif stype == SectionType.HIGHPASS_2:
+            # Sallen-Key Pasa Altas - Diseño de igual R
+            
+            a1 = den[-2]
+            a0 = den[-1]
 
-            stage_components = [
-                ("R1", ComponentType.RESISTOR, R, r_series),
-                ("C1", ComponentType.RESISTOR, C, c_series),
+            R = r_base
+            P = 1.0 / (a0 * R**2) #Producto C1 y C2
+            S = a1 / (a0 * R)     #Suma C1 y C2
+
+            discriminant = max(S**2 - 4*P, 0.0) 
+
+            C1_ideal = (S + np.sqrt(discriminant)) / 2.0
+            C2_ideal = (S - np.sqrt(discriminant)) / 2.0
+            R1_ideal = R
+            R2_ideal = R
+
+            componentes_etapa = [
+                ("R1", ComponentType.RESISTOR, R1_ideal),
+                ("R2", ComponentType.RESISTOR, R2_ideal),
+                ("C1", ComponentType.CAPACITOR, C1_ideal),
+                ("C2", ComponentType.CAPACITOR, C2_ideal),
             ]
+
+        elif stype == SectionType.BANDPASS:
+            # Sallen-Key Pasa Bandas - Topologia de multiple retroalimentacion
+            
+            a1 = den[-2]
+            a0 = den[-1]
+
+            omega0 = np.sqrt(a0)
+            Q = omega0 / a1 #Q = w0 / (w0/Q)
+
+            C = c_base
+
+            R1_ideal = Q / (omega0 * C) #Resistencia de entrada
+            R2_ideal = 1.0 / (Q * omega0 *C) #Resistencia de retroalimentación
+            C1_ideal = C
+            C2_ideal = C
+
+            componentes_etapa = [
+                ("R1", ComponentType.RESISTOR, R1_ideal),
+                ("R2", ComponentType.RESISTOR, R2_ideal),
+                ("C1", ComponentType.CAPACITOR, C1_ideal),
+                ("C2", ComponentType.CAPACITOR, C2_ideal),
+            ]
+
+        elif stype == SectionType.BANDSTOP:
+            # Red Twin-T Rechaza-Banda
+            
+            a0 = den[-1]
+
+            omega0 = np.sqrt(a0)
+            R = r_base
+            C = 1.0 / (omega0 * R) # Valor base de capacitor
+
+            R1_ideal = R
+            R2_ideal = R
+            R3_ideal = R / 2.0 #Resistencia central = R/2
+            C1_ideal = C
+            C2_ideal = C
+            C3_ideal = 2.0 * C #Capacitor central = 2C
+
+            componentes_etapa = [
+                ("R1", ComponentType.RESISTOR, R1_ideal),
+                ("R2", ComponentType.RESISTOR, R2_ideal),
+                ("R3", ComponentType.RESISTOR, R3_ideal),
+                ("C1", ComponentType.CAPACITOR, C1_ideal),
+                ("C2", ComponentType.CAPACITOR, C2_ideal),
+                ("C3", ComponentType.CAPACITOR, C3_ideal),
+            ]
+
+        elif stype == SectionType.LOWPASS_1:
+            # RC Pasa Bajas de primer orden + Seguidor de Tension
+            
+            a0 = den[-1]
+            omega0 = a0
+
+            C_ideal = c_base
+            R_ideal = 1.0 / (omega0 * C_ideal)
+
+            componentes_etapa = [
+                ("R1", ComponentType.RESISTOR, R_ideal),
+                ("C1", ComponentType.CAPACITOR, C_ideal),
+            ]
+
+        elif stype == SectionType.HIGHPASS_1:
+            # RC Pasa Altas de primer orden + Seguidor de Tension
+            
+            a0 = den[-1]
+            omega0 = a0
+
+            R_ideal = r_base
+            C_ideal = 1.0 / (omega0 * R_ideal)
+
+            componentes_etapa = [
+                ("R1", ComponentType.RESISTOR, R_ideal),
+                ("C1", ComponentType.CAPACITOR, C_ideal),
+            ]
+
         else:
-            #Unsupported section types (BP, BS, AP)
+            # Tipo de sección no soportado (ALLPASS, UNKNOWN) - Se omite 
+            print(f" [Advertencia] Etapa {stage_num}: sección tipo '{stype.value}' "
+                  f"no soportada, se omite.")
             continue
-    
-        #Rounding and Packing
-        for name, ctype, ideal_value, series in stage_components:
-            rounded_value = round_to_eseries(ideal_value, series)
-            error = eseries_error_pct(ideal_value, rounded_value)
 
-            components.append(
-                ComponentValue(
-                    stage = stage_index,
-                    name = name,
-                    component_type = ctype,
-                    ideal = ideal_value,
-                    rounded = rounded_value,
-                    error_pct = error,
-                    section_type = section,
-                    filter_type = filt_type,
-                )
-            )
-    return components 
+        # Redondea a sere E y registra cada componente
+        for name, ctype, ideal_val in componentes_etapa:
+            serie = r_series if ctype == ComponentType.RESISTOR else c_series
+            rounded = round_to_eseries(ideal_val, serie)
+            components.append(ComponentValue(
+                stage = stage_num,
+                name = name,
+                component_type = ctype,
+                ideal = ideal_val,
+                rounded = rounded,
+                error_pct = eseries_error_pct(ideal_val, rounded),
+                section_type = stype,
+                filter_type = ftype,
+            ))
+
+    return components
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ── STUDENT ENTRY POINT 6 ────────────────────────────────────────────────────
