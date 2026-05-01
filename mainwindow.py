@@ -20,10 +20,10 @@ import pyqtgraph as pg
 
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
-from PyQt6.QtGui import QAction, QActionGroup
+from PyQt6.QtGui import QAction, QActionGroup, QColor, QPalette
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QTableWidgetItem, QFileDialog,
-    QMessageBox, QHeaderView, QMenu,
+    QMessageBox, QHeaderView, QMenu, QStyledItemDelegate,
 )
 
 # ── backend ───────────────────────────────────────────────────────────────────
@@ -39,6 +39,37 @@ from resources.i18n import LANGUAGES, tr
 
 UI_FILE    = Path(__file__).parent / "mainwindow.ui"
 ABOUT_FILE = Path(__file__).parent / "about_dialog.ui"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Delegate that visually greys out disabled combo-box items
+# (QSS alone is not reliable across platforms for this)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class DisabledItemDelegate(QStyledItemDelegate):
+    """
+    Paints combo-box popup items in a muted colour when their
+    QStandardItem.isEnabled() flag is False, regardless of QSS theme.
+    """
+    # Colours for the two themes — updated via set_dark()
+    _DISABLED_DARK  = QColor("#4a5060")
+    _DISABLED_LIGHT = QColor("#b0b8c8")
+    _NORMAL_DARK    = QColor("#d8dde8")
+    _NORMAL_LIGHT   = QColor("#1e2230")
+
+    def __init__(self, parent=None, dark: bool = True):
+        super().__init__(parent)
+        self._dark = dark
+
+    def set_dark(self, dark: bool) -> None:
+        self._dark = dark
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        if not index.flags() & Qt.ItemFlag.ItemIsEnabled:
+            disabled_col = self._DISABLED_DARK if self._dark else self._DISABLED_LIGHT
+            option.palette.setColor(QPalette.ColorRole.Text, disabled_col)
+            option.palette.setColor(QPalette.ColorRole.HighlightedText, disabled_col)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -75,9 +106,6 @@ class MainWindow(QMainWindow):
         self._dark_mode : bool = True
         self._lang      : str  = "en"
         self._tf        : TransferFunction | None = None
-        self._biquads   : list[TransferFunction]  = []
-        self._f_start   : float = 1.0
-        self._f_stop    : float = 1e6
         self._components: list[ComponentValue]    = []
         self._sim_result: SimulationResult | None = None
         self._sim_thread: QThread | None          = None
@@ -86,9 +114,17 @@ class MainWindow(QMainWindow):
         self._setup_plots()
         self._setup_plot_widgets()
         self._connect_signals()
+
+        # Install delegates so disabled items render visibly greyed out
+        self._del_impl   = DisabledItemDelegate(self.cbImplementation, dark=self._dark_mode)
+        self._del_icmodel = DisabledItemDelegate(self.cbIcModel,        dark=self._dark_mode)
+        self.cbImplementation.setItemDelegate(self._del_impl)
+        self.cbIcModel.setItemDelegate(self._del_icmodel)
+
         self._apply_theme()
         self._retranslate()
         self._update_spec_fields()
+        self._update_impl_fields()
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -181,7 +217,6 @@ class MainWindow(QMainWindow):
         self.btnSimulate.clicked.connect(self._on_simulate)
         self.btnExportNetlist.clicked.connect(self._on_export_netlist)
         self.btnExportReport.clicked.connect(self._on_export_report)
-        self.btnResetZoom.clicked.connect(self._on_reset_zoom)
         self.btnToggleTheme.clicked.connect(self._on_toggle_theme)
 
         self.actionNew.triggered.connect(self._on_new)
@@ -195,8 +230,9 @@ class MainWindow(QMainWindow):
         self.actionAbout.triggered.connect(self._on_about)
 
         self.cbFilterType.currentIndexChanged.connect(self._update_spec_fields)
+        self.cbFilterType.currentIndexChanged.connect(self._update_impl_fields)
         self.cbApproximation.currentIndexChanged.connect(self._update_spec_fields)
-        self.chkShowSOS.stateChanged.connect(self._on_sos_toggled)
+        self.cbImplementation.currentIndexChanged.connect(self._update_impl_fields)
 
     # ── i18n ─────────────────────────────────────────────────────────────────
 
@@ -224,9 +260,7 @@ class MainWindow(QMainWindow):
         self.btnSimulate.setText(t("btn_simulate"))
         self.btnExportNetlist.setText(t("btn_export_netlist"))
         self.btnExportReport.setText(t("btn_export_report"))
-        self.btnResetZoom.setText(t("btn_reset_zoom"))
         self.btnToggleTheme.setText(t("btn_theme"))
-        self.chkShowSOS.setText(t("chk_show_sos"))
 
         self.gbApprox.setTitle(t("gb_approx"))
         self.gbSpecs.setTitle(t("gb_specs"))
@@ -263,7 +297,7 @@ class MainWindow(QMainWindow):
         self.lblCBase.setText(t("lbl_c_base"))
 
         self.tblComponents.setHorizontalHeaderLabels([
-            t("tbl_stage"), t("tbl_type"), t("tbl_component"),
+            t("tbl_stage"), t("tbl_component"),
             t("tbl_ideal"), t("tbl_rounded"), t("tbl_error"),
         ])
 
@@ -288,6 +322,7 @@ class MainWindow(QMainWindow):
         self.lblSchematic.setText(t("schematic_placeholder"))
 
         self._update_spec_fields()
+        self._update_impl_fields()
 
     def _on_language_changed(self) -> None:
         action = self.sender()
@@ -316,6 +351,45 @@ class MainWindow(QMainWindow):
 
         self.lblComputedOrder.setText("—")
 
+    def _update_impl_fields(self) -> None:
+        """
+        Dynamically constrain topology and IC model dropdowns based on
+        the current filter type and topology selection.
+
+        Rules:
+          • High-pass filters cannot use Deliyannis-Friend (no HP topology exists).
+          • Tow-Thomas (UAF42) topology only works with the UAF42 IC model.
+        """
+        ft       = FilterType(self.cbFilterType.currentIndex())
+        topo_idx = self.cbImplementation.currentIndex()
+
+        # ── Rule 1: Deliyannis-Friend not available for High-pass ────────
+        is_highpass = ft == FilterType.HIGHPASS
+        deliy_item  = self.cbImplementation.model().item(2)   # index 2 = Deliyannis
+        if is_highpass:
+            deliy_item.setEnabled(False)
+            deliy_item.setToolTip(self._("topo_del_disabled_hp"))
+            # If Deliyannis is currently selected, fall back to Sallen-Key
+            if topo_idx == 2:
+                self.cbImplementation.setCurrentIndex(0)
+        else:
+            deliy_item.setEnabled(True)
+            deliy_item.setToolTip("")
+
+        # ── Rule 2: Tow-Thomas forces UAF42 IC model ─────────────────────
+        is_tow_thomas = self.cbImplementation.currentIndex() == 1
+        for i in range(self.cbIcModel.count()):
+            item = self.cbIcModel.model().item(i)
+            if is_tow_thomas:
+                # Only UAF42 is valid — disable everything else
+                is_uaf42 = "UAF42" in item.text()
+                item.setEnabled(is_uaf42)
+                if is_uaf42:
+                    self.cbIcModel.setCurrentIndex(i)
+            else:
+                # Restore all models when switching away from Tow-Thomas
+                item.setEnabled(True)
+
     # ── Theme ─────────────────────────────────────────────────────────────────
 
     def _apply_theme(self) -> None:
@@ -330,6 +404,8 @@ class MainWindow(QMainWindow):
 
     def _on_toggle_theme(self) -> None:
         self._dark_mode = not self._dark_mode
+        self._del_impl.set_dark(self._dark_mode)
+        self._del_icmodel.set_dark(self._dark_mode)
         self._apply_theme()
 
     # ── Read spec ─────────────────────────────────────────────────────────────
@@ -358,39 +434,19 @@ class MainWindow(QMainWindow):
             self._tf, computed_order = fd.compute_transfer_function(spec)
             self.lblComputedOrder.setText(str(computed_order))
 
-            # ── Frequency range: always bracket the actual spec edges ──────
-            ft = fd.FilterType(self.cbFilterType.currentIndex())
-            if ft in (fd.FilterType.BANDPASS, fd.FilterType.BANDSTOP):
-                # For two-band types use the outer edges
-                f_lo = min(spec.fp, spec.fs, spec.fp2, spec.fs2)
-                f_hi = max(spec.fp, spec.fs, spec.fp2, spec.fs2)
-            else:
-                f_lo = min(spec.fp, spec.fs)
-                f_hi = max(spec.fp, spec.fs)
-            # Sweep one decade below the lower edge and one above the upper
-            f_start = f_lo / 10.0
-            f_stop  = f_hi * 10.0
-
             freqs, mag_db, phase_deg, gd = fd.compute_frequency_response(
-                self._tf, f_start=f_start, f_stop=f_stop)
+                self._tf, f_start=spec.fp / 1000, f_stop=spec.fp * 1000)
             self._plot_theoretical(freqs, mag_db, phase_deg, gd)
-
-            # ── SOS stage overlays (if checkbox is on) ────────────────────
-            self._biquads = fd.factored_biquads(self._tf)
-            self._f_start = f_start
-            self._f_stop  = f_stop
-            if self.chkShowSOS.isChecked():
-                self._plot_sos_responses(self._biquads, f_start, f_stop)
-
             self.tabPlots.setCurrentIndex(0)
             self._plot_pole_zero(self._tf)
 
             topology = Topology(self.cbImplementation.currentIndex())
+            biquads  = fd.factored_biquads(self._tf)
             self._components = {
                 Topology.SALLEN_KEY: fd.synthesise_sallen_key,
                 Topology.TOW_THOMAS: fd.synthesise_tow_thomas,
                 Topology.DELIYANNIS: fd.synthesise_deliyannis,
-            }[topology](self._biquads, self.sbRBase.value(), self.sbCBase.value(),
+            }[topology](biquads, self.sbRBase.value(), self.sbCBase.value(),
                         self._read_eseries(self.cbRSeries),
                         self._read_eseries(self.cbCSeries))
             self._populate_component_table(self._components)
@@ -471,48 +527,6 @@ class MainWindow(QMainWindow):
             if not pw.plotItem.legend:
                 pw.addLegend()
 
-    def _plot_sos_responses(
-        self,
-        biquads: list[TransferFunction],
-        f_start: float,
-        f_stop: float,
-    ) -> None:
-        """Overlay individual SOS stage responses as thin dashed lines."""
-        # Distinct muted colours, one per stage, cycling if order > 8
-        palette = [
-            "#a0c4ff", "#b9fbc0", "#ffd6a5", "#ffadad",
-            "#caffbf", "#fdffb6", "#c77dff", "#f4acb7",
-        ]
-        for i, bq in enumerate(biquads):
-            try:
-                freqs, mag, _, _ = fd.compute_frequency_response(
-                    bq, f_start=f_start, f_stop=f_stop)
-                color = pg.mkColor(palette[i % len(palette)])
-                color.setAlpha(180)   # ~70% opacity
-                pen = pg.mkPen(color, width=1.2)
-                self._plot_mag.plot(freqs, mag, pen=pen,
-                                    name=f"SOS {i + 1}")
-            except Exception:
-                pass   # skip silently if a biquad isn't ready yet
-
-    def _on_sos_toggled(self) -> None:
-        """Re-draw the magnitude plot when the SOS checkbox changes."""
-        if not self._tf:
-            return
-        # Re-plot theoretical (clears previous SOS lines too)
-        try:
-            freqs, mag_db, phase_deg, gd = fd.compute_frequency_response(
-                self._tf, f_start=self._f_start, f_stop=self._f_stop)
-            self._plot_theoretical(freqs, mag_db, phase_deg, gd)
-            if self.chkShowSOS.isChecked() and self._biquads:
-                self._plot_sos_responses(
-                    self._biquads, self._f_start, self._f_stop)
-            # Re-overlay SPICE if available
-            if self._sim_result:
-                self._plot_simulated(self._sim_result)
-        except Exception:
-            pass
-
     def _plot_simulated(self, result: SimulationResult) -> None:
         name = self._("legend_spice")
         self._plot_mag.plot(result.frequencies, result.magnitude_db,
@@ -539,23 +553,14 @@ class MainWindow(QMainWindow):
         tbl = self.tblComponents
         tbl.setRowCount(len(components))
         for row, c in enumerate(components):
-            # Stage
             tbl.setItem(row, 0, QTableWidgetItem(str(c.stage)))
-            # Type badge  (R / C)
-            type_item = QTableWidgetItem(c.component_type.value)
-            type_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            tbl.setItem(row, 1, type_item)
-            # Name
-            tbl.setItem(row, 2, QTableWidgetItem(c.name))
-            # Ideal value — SI formatted
-            tbl.setItem(row, 3, QTableWidgetItem(c.formatted_ideal()))
-            # Rounded value — SI formatted
-            tbl.setItem(row, 4, QTableWidgetItem(c.formatted_rounded()))
-            # Error %
-            err_item = QTableWidgetItem(f"{c.error_pct:+.2f} %")
+            tbl.setItem(row, 1, QTableWidgetItem(c.name))
+            tbl.setItem(row, 2, QTableWidgetItem(f"{c.ideal:.6g}"))
+            tbl.setItem(row, 3, QTableWidgetItem(f"{c.rounded:.6g}"))
+            err_item = QTableWidgetItem(f"{c.error_pct:+.2f}")
             if abs(c.error_pct) > 5.0:
                 err_item.setForeground(pg.mkColor("#ff6b6b"))
-            tbl.setItem(row, 5, err_item)
+            tbl.setItem(row, 4, err_item)
         tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
     # ── Export ────────────────────────────────────────────────────────────────
@@ -590,9 +595,6 @@ class MainWindow(QMainWindow):
 
     def _on_new(self) -> None:
         self._tf = None
-        self._biquads = []
-        self._f_start = 1.0
-        self._f_stop  = 1e6
         self._components = []
         self._sim_result = None
         for pw in (self._plot_mag, self._plot_phase, self._plot_gd, self._plot_pz):
@@ -613,12 +615,6 @@ class MainWindow(QMainWindow):
 
     def _on_toggle_left_panel(self) -> None:
         self.leftPanel.setVisible(not self.leftPanel.isVisible())
-
-    def _on_reset_zoom(self) -> None:
-        """Reset all plot views to fit their current data."""
-        for pw in (self._plot_mag, self._plot_phase,
-                   self._plot_gd, self._plot_pz):
-            pw.autoRange()
 
     def _on_about(self) -> None:
         dlg = uic.loadUi(ABOUT_FILE)
