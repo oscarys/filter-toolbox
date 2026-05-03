@@ -732,25 +732,118 @@ def synthesise_tow_thomas(
     r_series: ESeries,
     c_series: ESeries,
 ) -> list[ComponentValue]:
-    """
-    Compute component values for a Tow-Thomas (state-variable / UAF42) cascade.
 
-    Notes
-    -----
-    ── STUDENT CODE ──
-    The UAF42 integrates two lossless integrators and a weighted summer.
-    Inspect biquad.section_type for each stage:
-      SectionType.LOWPASS_2  → tap LP output of UAF42
-      SectionType.BANDPASS   → tap BP output of UAF42
-      SectionType.HIGHPASS_2 → tap HP output of UAF42
-      SectionType.BANDSTOP   → sum LP and HP outputs externally
-    For each biquad:
-        C₁ = C₂ = C  (user base value)
-        R₁ = R₂ = 1 / (ω₀ · C)
-        R_q = Q / (ω₀ · C)   (Q-setting resistor)
-    Refer to the Burr-Brown UAF42 datasheet for full design equations.
-    """
-    raise NotImplementedError("STUDENT: implement synthesise_tow_thomas()")
+    components = []
+
+    R_INTERNAL = 50e3
+    C = c_base
+
+    for stage_idx, biquad in enumerate(biquads):
+        stage = stage_idx + 1
+        den = np.asarray(biquad.denominator, dtype=float)
+
+        # Caso A: sección de primer orden → RC sencillo
+        if len(den) == 2:
+            a0, a1 = den
+
+            if abs(a0) < 1e-12:
+                print(f"debug stage {stage}: primer orden inválido, saltando")
+                continue
+
+            omega_c = abs(a1 / a0)
+
+            CP = C
+            CP_r = round_to_eseries(CP, c_series)
+
+            RP = 1.0 / (omega_c * CP)
+            RP_r = round_to_eseries(RP, r_series)
+
+            for name, val, val_r, ctype in (
+                ("CP", CP, CP_r, ComponentType.CAPACITOR),
+                ("RP", RP, RP_r, ComponentType.RESISTOR),
+            ):
+                components.append(ComponentValue(
+                    stage          = stage,
+                    name           = name,
+                    component_type = ctype,
+                    ideal          = val,
+                    rounded        = val_r,
+                    error_pct      = eseries_error_pct(val, val_r),
+                    section_type   = biquad.section_type,
+                    filter_type    = biquad.filter_type,
+                ))
+
+            print(
+                f"debug stage {stage}: 1er orden "
+                f"ωc={omega_c:.2f} rad/s, "
+                f"RP={RP:.2f}Ω, CP={CP:.2e}F"
+            )
+
+            continue
+
+        # Caso B: sección de segundo orden → Tow-Thomas / UAF42
+        if len(den) == 3:
+            a0, a1, a2 = den
+
+            if abs(a0) < 1e-12 or abs(a1) < 1e-12:
+                print(f"debug stage {stage}: sección de segundo orden inválida, saltando")
+                continue
+
+            omega_0 = np.sqrt(abs(a2 / a0))
+            Q = np.sqrt(abs(a0 * a2)) / abs(a1)
+
+            RF1 = 1.0 / (omega_0 * C)
+            RF2 = 1.0 / (omega_0 * C)
+
+            RG = R_INTERNAL
+
+            factor = (2.0 * RG + R_INTERNAL) / RG
+            denominator_rq = factor * Q - 1.0
+
+            if denominator_rq <= 0:
+                print(
+                    f"debug stage {stage}: Q={Q:.4f} no realizable "
+                    f"con RG={RG:.2f}Ω, saltando"
+                )
+                continue
+
+            RQ = R_INTERNAL / denominator_rq
+
+            RG_r  = round_to_eseries(RG,  r_series)
+            RF1_r = round_to_eseries(RF1, r_series)
+            RF2_r = round_to_eseries(RF2, r_series)
+            RQ_r  = round_to_eseries(RQ,  r_series)
+
+            for name, val, val_r in (
+                ("RG",  RG,  RG_r),
+                ("RF1", RF1, RF1_r),
+                ("RF2", RF2, RF2_r),
+                ("RQ",  RQ,  RQ_r),
+            ):
+                components.append(ComponentValue(
+                    stage          = stage,
+                    name           = name,
+                    component_type = ComponentType.RESISTOR,
+                    ideal          = val,
+                    rounded        = val_r,
+                    error_pct      = eseries_error_pct(val, val_r),
+                    section_type   = biquad.section_type,
+                    filter_type    = biquad.filter_type,
+                ))
+
+            print(
+                f"debug stage {stage}: Tow-Thomas "
+                f"type={biquad.section_type.value}, "
+                f"ω0={omega_0:.2f} rad/s, "
+                f"f0={omega_0/(2*np.pi):.2f} Hz, "
+                f"Q={Q:.4f}, "
+                f"RG={RG:.2f}Ω, RF1={RF1:.2f}Ω, "
+                f"RF2={RF2:.2f}Ω, RQ={RQ:.2f}Ω"
+            )
+
+            continue
+
+    return components
 
 
 # ──────────────────────────────────────────────────────────────────────────────
