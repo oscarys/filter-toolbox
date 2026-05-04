@@ -106,12 +106,10 @@ class MainWindow(QMainWindow):
         self._dark_mode : bool = True
         self._lang      : str  = "en"
         self._tf        : TransferFunction | None = None
-        self._biquads   : list[TransferFunction]  = []
-        self._f_start   : float = 1.0
-        self._f_stop    : float = 1e6
         self._components: list[ComponentValue]    = []
         self._sim_result: SimulationResult | None = None
         self._sim_thread: QThread | None          = None
+        self._sim_worker: SimWorker | None        = None
 
         self._setup_menu_bar()
         self._setup_plots()
@@ -236,8 +234,6 @@ class MainWindow(QMainWindow):
         self.cbFilterType.currentIndexChanged.connect(self._update_impl_fields)
         self.cbApproximation.currentIndexChanged.connect(self._update_spec_fields)
         self.cbImplementation.currentIndexChanged.connect(self._update_impl_fields)
-        self.chkShowSOS.stateChanged.connect(self._on_sos_toggled)
-        self.btnResetZoom.clicked.connect(self._on_reset_zoom)
 
     # ── i18n ─────────────────────────────────────────────────────────────────
 
@@ -265,9 +261,7 @@ class MainWindow(QMainWindow):
         self.btnSimulate.setText(t("btn_simulate"))
         self.btnExportNetlist.setText(t("btn_export_netlist"))
         self.btnExportReport.setText(t("btn_export_report"))
-        self.btnResetZoom.setText(t("btn_reset_zoom"))
         self.btnToggleTheme.setText(t("btn_theme"))
-        self.chkShowSOS.setText(t("chk_show_sos"))
 
         self.gbApprox.setTitle(t("gb_approx"))
         self.gbSpecs.setTitle(t("gb_specs"))
@@ -441,35 +435,19 @@ class MainWindow(QMainWindow):
             self._tf, computed_order = fd.compute_transfer_function(spec)
             self.lblComputedOrder.setText(str(computed_order))
 
-            # Smart frequency range — bracket actual spec edges ±1 decade
-            ft = fd.FilterType(self.cbFilterType.currentIndex())
-            if ft in (fd.FilterType.BANDPASS, fd.FilterType.BANDSTOP):
-                f_lo = min(spec.fp, spec.fs, spec.fp2, spec.fs2)
-                f_hi = max(spec.fp, spec.fs, spec.fp2, spec.fs2)
-            else:
-                f_lo = min(spec.fp, spec.fs)
-                f_hi = max(spec.fp, spec.fs)
-            self._f_start = f_lo / 10.0
-            self._f_stop  = f_hi * 10.0
-
             freqs, mag_db, phase_deg, gd = fd.compute_frequency_response(
-                self._tf, f_start=self._f_start, f_stop=self._f_stop)
+                self._tf, f_start=spec.fp / 1000, f_stop=spec.fp * 1000)
             self._plot_theoretical(freqs, mag_db, phase_deg, gd)
-
-            # Store biquads so the SOS checkbox can redraw without redesigning
-            self._biquads = fd.factored_biquads(self._tf)
-            if self.chkShowSOS.isChecked():
-                self._plot_sos_responses(self._biquads, self._f_start, self._f_stop)
-
             self.tabPlots.setCurrentIndex(0)
             self._plot_pole_zero(self._tf)
 
             topology = Topology(self.cbImplementation.currentIndex())
+            biquads  = fd.factored_biquads(self._tf)
             self._components = {
                 Topology.SALLEN_KEY: fd.synthesise_sallen_key,
                 Topology.TOW_THOMAS: fd.synthesise_tow_thomas,
                 Topology.DELIYANNIS: fd.synthesise_deliyannis,
-            }[topology](self._biquads, self.sbRBase.value(), self.sbCBase.value(),
+            }[topology](biquads, self.sbRBase.value(), self.sbCBase.value(),
                         self._read_eseries(self.cbRSeries),
                         self._read_eseries(self.cbCSeries))
             self._populate_component_table(self._components)
@@ -505,22 +483,25 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
         self._sim_thread = QThread()
-        worker = SimWorker(netlist)
-        worker.moveToThread(self._sim_thread)
-        self._sim_thread.started.connect(worker.run)
-        worker.finished.connect(self._on_simulation_done)
-        worker.error.connect(self._on_simulation_error)
-        worker.finished.connect(self._sim_thread.quit)
-        worker.error.connect(self._sim_thread.quit)
+        self._sim_worker = SimWorker(netlist)           # keep ref — prevents GC
+        self._sim_worker.moveToThread(self._sim_thread)
+        self._sim_thread.started.connect(self._sim_worker.run)
+        self._sim_worker.finished.connect(self._on_simulation_done)
+        self._sim_worker.error.connect(self._on_simulation_error)
+        self._sim_worker.finished.connect(self._sim_thread.quit)
+        self._sim_worker.error.connect(self._sim_thread.quit)
+        self._sim_thread.finished.connect(self._sim_thread.deleteLater)
         self._sim_thread.start()
 
     def _on_simulation_done(self, result: SimulationResult) -> None:
         self._sim_result = result
+        self._sim_worker = None
         self.btnSimulate.setEnabled(True)
         self._plot_simulated(result)
         self.lblStatus.setText(self._("status_sim_done"))
 
     def _on_simulation_error(self, msg: str) -> None:
+        self._sim_worker = None
         self.btnSimulate.setEnabled(True)
         if "not yet implemented" in msg:
             self._show_not_implemented(msg)
@@ -556,44 +537,6 @@ class MainWindow(QMainWindow):
                             pen=self._SPICE_PEN, name=name)
         self._plot_phase.plot(result.frequencies, result.phase_deg,
                               pen=self._SPICE_PEN, name=name)
-
-    def _plot_sos_responses(self, biquads, f_start: float, f_stop: float) -> None:
-        """Overlay individual SOS stage responses as thin solid lines with alpha."""
-        palette = [
-            "#a0c4ff", "#b9fbc0", "#ffd6a5", "#ffadad",
-            "#caffbf", "#fdffb6", "#c77dff", "#f4acb7",
-        ]
-        for i, bq in enumerate(biquads):
-            try:
-                freqs, mag, _, _ = fd.compute_frequency_response(
-                    bq, f_start=f_start, f_stop=f_stop)
-                color = pg.mkColor(palette[i % len(palette)])
-                color.setAlpha(180)
-                self._plot_mag.plot(freqs, mag,
-                                    pen=pg.mkPen(color, width=1.2),
-                                    name=f"SOS {i + 1}")
-            except Exception:
-                pass
-
-    def _on_sos_toggled(self) -> None:
-        """Redraw magnitude plot when the SOS checkbox is toggled."""
-        if not self._tf:
-            return
-        try:
-            freqs, mag_db, phase_deg, gd = fd.compute_frequency_response(
-                self._tf, f_start=self._f_start, f_stop=self._f_stop)
-            self._plot_theoretical(freqs, mag_db, phase_deg, gd)
-            if self.chkShowSOS.isChecked() and self._biquads:
-                self._plot_sos_responses(self._biquads, self._f_start, self._f_stop)
-            if self._sim_result:
-                self._plot_simulated(self._sim_result)
-        except Exception:
-            pass
-
-    def _on_reset_zoom(self) -> None:
-        """Reset all plot views to fit their current data."""
-        for pw in (self._plot_mag, self._plot_phase, self._plot_gd, self._plot_pz):
-            pw.autoRange()
 
     def _plot_pole_zero(self, tf: TransferFunction) -> None:
         self._plot_pz.clear()
@@ -656,9 +599,6 @@ class MainWindow(QMainWindow):
 
     def _on_new(self) -> None:
         self._tf = None
-        self._biquads = []
-        self._f_start = 1.0
-        self._f_stop  = 1e6
         self._components = []
         self._sim_result = None
         for pw in (self._plot_mag, self._plot_phase, self._plot_gd, self._plot_pz):
