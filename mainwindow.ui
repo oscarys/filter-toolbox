@@ -203,12 +203,9 @@
           </item>
           <item row="1" column="1">
            <widget class="QComboBox" name="cbIcModel">
-            <item><property name="text"><string>Ideal</string></property></item>
-            <item><property name="text"><string>TL071</string></property></item>
             <item><property name="text"><string>LM741</string></property></item>
-            <item><property name="text"><string>TL082</string></property></item>
+            <item><property name="text"><string>TL081</string></property></item>
             <item><property name="text"><string>UAF42 (Burr-Brown)</string></property></item>
-            <item><property name="text"><string>Custom SPICE…</string></property></item>
            </widget>
           </item>
 

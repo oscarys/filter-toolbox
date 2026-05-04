@@ -1415,14 +1415,11 @@ def _opamp_subckt(ic_model: str) -> tuple[str, str]:
         X_Ux  <non_inv>  <inv>  <out>  vcc  vee  <subckt_name>
     """
     _MODELS = {
-        "Ideal":              ("IDEAL_OPAMP", "resources/spice_models/ideal_opamp.lib"),
-        "TL071":              ("TL071",        "resources/spice_models/tl071.lib"),
-        "LM741":              ("LM741",        "resources/spice_models/lm741.lib"),
-        "TL082":              ("TL082",        "resources/spice_models/tl082.lib"),
-        "UAF42 (Burr-Brown)": ("UAF42",        "resources/spice_models/uaf42.lib"),
-        "Custom SPICE…":      ("IDEAL_OPAMP",  "resources/spice_models/ideal_opamp.lib"),
+        "LM741":              ("LM741", "resources/spice_models/lm741.lib"),
+        "TL081":              ("TL081", "resources/spice_models/tl081.lib"),
+        "UAF42 (Burr-Brown)": ("UAF42", "resources/spice_models/uaf42.lib"),
     }
-    return _MODELS.get(ic_model, ("IDEAL_OPAMP", "resources/spice_models/ideal_opamp.lib"))
+    return _MODELS.get(ic_model, ("LM741", "resources/spice_models/lm741.lib"))
 
 
 def _find_ngspice() -> str:
