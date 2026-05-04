@@ -393,38 +393,34 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
 
     match spec.filter_type : 
         case FilterType.LOWPASS: 
+            print(f'debug (oscar): lp frec desnormalización: {omega_c/(2*np.pi)} Hz')
             z, p, k = sps.lp2lp_zpk(z, p, k, wo=omega_c)
 
         case FilterType.HIGHPASS:
+            print(f'debug (oscar): hp frec desnormalización: {omega_c/(2*np.pi)} Hz')
             z, p, k = sps.lp2hp_zpk(z, p, k, wo=omega_c)
 
         case FilterType.BANDPASS:
             omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
             BW      = spec.omega_p2 - spec.omega_p
+            print(f'debug (oscar): bp frec desnormalización: {omega_0/(2*np.pi)} Hz')
+            print(f'debug (oscar): bp bandwidth: {BW/(2*np.pi)} Hz')
             z, p, k = sps.lp2bp_zpk(z, p, k, wo=omega_0, bw=BW)
 
         case FilterType.BANDSTOP:
             omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
             BW      = spec.omega_p2 - spec.omega_p
+            print(f'debug (oscar): bs frec desnormalización: {omega_0/(2*np.pi)} Hz')
+            print(f'debug (oscar): bs bandwidth: {BW/(2*np.pi)} Hz')
             z, p, k = sps.lp2bs_zpk(z, p, k, wo=omega_0, bw=BW)
 
-    
-
-
-    # Calcula los polinomios normalizados de la función de transferencia
+    # Calcula los polinomios de la función de transferencia
     # Convertir ZPK a coeficientes de polinomio 
     # zpk2tf convierte zeros,polos,ganancia a coeficientes num/den en orden
     # descendente de potencias: [b_n, b_{n-1}, b_0] / [a_n, a_0]
     # np.real() elimina la parte imaginaria residual de punto flotante (~1e-16).
     # Los coeficientes deben ser reales porque los polos complejos siempre son pares conjugados.
     num, den = sps.zpk2tf(z, p, k)
-
-    # Transformación del filtro pasabajas a su tipo final:
-    # match spec.filter_type:
-    #    case FilterType.LOWPASS:  b, a = sps.lp2lp(nb, na)
-    #    case FilterType.HIGHPASS: b, a = sps.lp2hp(nb, na)
-    #    case FilterType.BANDPASS: b, a = sps.lp2bp(nb, na)
-    #    case FilterType.BANDSTOP: b, a = sps.lp2bs(nb, na)
 
     # objeto TransferFunction
     # Se necesita los coeficientes para graficar H(jω) y los polos/zeros para el mapa polo-cero.
@@ -437,11 +433,9 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
         filter_type = spec.filter_type,   # carry spec context into TF
     )
 
-    print(f'debug: orden={n}, polos={p}')
+    print(f'debug (oscar): num: {tf.numerator}')
+    print(f'debug (oscar): den: {tf.denominator}')
 
-    # Crea el objeto para la fucnión de transferencia
-    # tf = TransferFunction(nb, na)
-           
     # Regresa el objeto función de transferencia y el orden
     return (tf, n)
     
