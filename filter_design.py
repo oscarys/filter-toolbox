@@ -1425,6 +1425,30 @@ def _opamp_subckt(ic_model: str) -> tuple[str, str]:
     return _MODELS.get(ic_model, ("IDEAL_OPAMP", "resources/spice_models/ideal_opamp.lib"))
 
 
+def _find_ngspice() -> str:
+    """
+    Locate the ngspice executable, searching conda prefix and common system paths.
+    Instructor-provided — do NOT modify.
+    """
+    import shutil, sys, os
+    found = shutil.which("ngspice")
+    if found:
+        return found
+    prefix = sys.prefix
+    candidates = [
+        os.path.join(prefix, "bin", "ngspice"),
+        os.path.join(prefix, "Library", "bin", "ngspice.exe"),
+        os.path.join(prefix, "Scripts", "ngspice.exe"),
+        "/usr/bin/ngspice",
+        "/usr/local/bin/ngspice",
+        "/opt/homebrew/bin/ngspice",
+    ]
+    for path in candidates:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return "ngspice"   # last resort — let SpiceServer raise a clear error
+
+
 def run_spice_simulation(netlist: str) -> SimulationResult:
     """
     Execute an AC simulation via PySpice / ngspice and return the results.
@@ -1459,7 +1483,7 @@ def run_spice_simulation(netlist: str) -> SimulationResult:
         raise ValueError("No .probe V(...) line found in netlist.")
 
     # Run ngspice in server mode
-    raw_file = SpiceServer()(netlist)
+    raw_file = SpiceServer(spice_command=_find_ngspice())(netlist)
 
     # Find AC analysis in results
     analysis = None
