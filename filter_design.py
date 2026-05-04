@@ -1220,67 +1220,219 @@ def generate_spice_netlist(
 ) -> str:
     """
     Build a SPICE netlist string for AC analysis of the designed filter.
-
-    Parameters
-    ----------
-    components : list[ComponentValue]   – from synthesise_*()
-    topology   : Topology
-    ic_model   : str                    – e.g. "TL071", "LM741", "Ideal"
-
-    Returns
-    -------
-    str  – complete SPICE netlist ready to write to a .cir file.
-
-    Notes
-    -----
-    ── STUDENT CODE ──
-    Each ComponentValue carries:
-      .name            — "R1", "C2", etc.
-      .component_type  — ComponentType.RESISTOR or ComponentType.CAPACITOR
-      .stage           — which biquad stage (1-indexed)
-      .rounded         — the E-series value to use in the netlist
-      .section_type    — SectionType.LP2 / BP / HP2 / BS / LP1 / HP1 etc.
-      .filter_type     — FilterType.LOWPASS / BANDPASS / etc. (global context)
-
-    Suggested approach:
-      1. Group components by stage:
-             from itertools import groupby
-             stages = {s: list(g) for s, g in groupby(components, key=lambda c: c.stage)}
-      2. For each stage, read stages[s][0].section_type to pick the subcircuit
-         template (LP Sallen-Key, BP Deliyannis, etc.)
-      3. Within the stage, identify each component by .name ("R1", "C1", …)
-         and use .rounded as the value in the netlist line.
-      4. Wire stages in cascade: out of stage N → in of stage N+1.
-
-    Include in the netlist:
-      * .ac dec 100 {f_start} {f_stop}
-      * Voltage source Vin ac 1
-      * Op-amp subcircuit from resources/spice_models/{ic_model}.lib
-      * .probe V(out)
+    Instructor-provided — do NOT modify.
     """
+    # Group components by stage, keyed by component name
+    stages: dict[int, dict[str, ComponentValue]] = {}
+    for c in components:
+        stages.setdefault(c.stage, {})[c.name] = c
+
+    n_stages   = len(stages)
+    opamp, lib = _opamp_subckt(ic_model)
+
+    lines = [
+        f"* Analog Filter — {topology.name}  IC: {ic_model}",
+        f".lib {lib}",
+        "",
+        "* Supply rails",
+        "Vcc  vcc  0  DC  15",
+        "Vee  vee  0  DC -15",
+        "",
+        "* AC input source",
+        "Vin  n_in  0  AC 1  DC 0",
+        "",
+    ]
+
     match topology:
-        case Topology.DELIYANNIS:              
-            for component in components:
-                print(f'debug (xoscar) Components: {component.name}{component.stage} = {component.rounded}')
-            print(f'debug (oscar) IC: {ic_model}')
+
+        # ── Sallen-Key ────────────────────────────────────────────────────────
+        case Topology.SALLEN_KEY:
+            for s, comps in stages.items():
+                stype = next(iter(comps.values())).section_type
+                n_in  = "n_in" if s == 1 else f"n_s{s-1}_out"
+                n_out = f"n_s{s}_out"
+                n_mid = f"n_s{s}_mid"
+                lines.append(f"* ── Stage {s}  [{stype.value}] ──────────────")
+
+                if stype in (SectionType.LOWPASS_2, SectionType.BANDPASS):
+                    r1, r2 = comps["R1"].rounded, comps["R2"].rounded
+                    c1, c2 = comps["C1"].rounded, comps["C2"].rounded
+                    lines += [
+                        f"R1_{s}  {n_in}   {n_mid}  {r1:.6g}",
+                        f"R2_{s}  {n_mid}  {n_out}  {r2:.6g}",
+                        f"C1_{s}  {n_mid}  0        {c1:.6g}",
+                        f"C2_{s}  {n_out}  {n_mid}  {c2:.6g}",
+                        f"X_U{s}  {n_out}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                    ]
+                elif stype == SectionType.HIGHPASS_2:
+                    r1, r2 = comps["R1"].rounded, comps["R2"].rounded
+                    c1, c2 = comps["C1"].rounded, comps["C2"].rounded
+                    lines += [
+                        f"C1_{s}  {n_in}   {n_mid}  {c1:.6g}",
+                        f"C2_{s}  {n_mid}  {n_out}  {c2:.6g}",
+                        f"R1_{s}  {n_mid}  0        {r1:.6g}",
+                        f"R2_{s}  {n_out}  {n_mid}  {r2:.6g}",
+                        f"X_U{s}  {n_out}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                    ]
+                elif stype == SectionType.BANDSTOP:
+                    r1, r2, r3 = comps["R1"].rounded, comps["R2"].rounded, comps["R3"].rounded
+                    c1, c2, c3 = comps["C1"].rounded, comps["C2"].rounded, comps["C3"].rounded
+                    n_tee = f"n_s{s}_tee"
+                    lines += [
+                        f"R1_{s}  {n_in}   {n_tee}  {r1:.6g}",
+                        f"R2_{s}  {n_tee}  {n_out}  {r2:.6g}",
+                        f"C1_{s}  {n_in}   {n_tee}  {c1:.6g}",
+                        f"C2_{s}  {n_tee}  {n_out}  {c2:.6g}",
+                        f"R3_{s}  {n_tee}  0        {r3:.6g}",
+                        f"C3_{s}  {n_tee}  0        {c3:.6g}",
+                        f"X_U{s}  {n_out}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                    ]
+                elif stype in (SectionType.LOWPASS_1, SectionType.HIGHPASS_1):
+                    r1, c1 = comps["R1"].rounded, comps["C1"].rounded
+                    if stype == SectionType.LOWPASS_1:
+                        lines += [
+                            f"R1_{s}  {n_in}   {n_mid}  {r1:.6g}",
+                            f"C1_{s}  {n_mid}  0        {c1:.6g}",
+                        ]
+                    else:
+                        lines += [
+                            f"C1_{s}  {n_in}   {n_mid}  {c1:.6g}",
+                            f"R1_{s}  {n_mid}  0        {r1:.6g}",
+                        ]
+                    lines.append(f"X_U{s}  {n_mid}  {n_out}  {n_out}  vcc  vee  {opamp}")
+                else:
+                    lines.append(f"* Stage {s}: {stype.value} not supported for SK — skipped")
+                lines.append("")
+
+        # ── Tow-Thomas / UAF42 ────────────────────────────────────────────────
+        case Topology.TOW_THOMAS:
+            for s, comps in stages.items():
+                stype = next(iter(comps.values())).section_type
+                n_in  = "n_in" if s == 1 else f"n_s{s-1}_out"
+                n_lp  = f"n_s{s}_lp"
+                n_bp  = f"n_s{s}_bp"
+                n_hp  = f"n_s{s}_hp"
+                n_out = f"n_s{s}_out"
+                lines.append(f"* ── Stage {s}  [{stype.value}] ──────────────")
+
+                if len(comps) == 2:
+                    # First-order RC + follower
+                    rp = (comps.get("RP") or comps.get("R1")).rounded
+                    cp = (comps.get("CP") or comps.get("C1")).rounded
+                    n_rc = f"n_s{s}_rc"
+                    lines += [
+                        f"R1_{s}  {n_in}  {n_rc}  {rp:.6g}",
+                        f"C1_{s}  {n_rc}  0       {cp:.6g}",
+                        f"X_U{s}  {n_rc}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                    ]
+                else:
+                    rg  = comps["RG"].rounded
+                    rf1 = comps["RF1"].rounded
+                    rf2 = comps["RF2"].rounded
+                    rq  = comps["RQ"].rounded
+                    tap = {"LP2": n_lp, "BP": n_bp, "HP2": n_hp}.get(stype.value, n_lp)
+                    lines += [
+                        f"X_U{s}  {n_in}  {n_lp}  {n_bp}  {n_hp}  "
+                        f"0  {rq:.6g}  {rf1:.6g}  {rf2:.6g}  {rg:.6g}  vcc  vee  UAF42",
+                        f"Vwire_{s}  {tap}  {n_out}  DC 0",
+                    ]
+                    if stype == SectionType.BANDSTOP:
+                        r_sum = 10e3
+                        n_sum = f"n_s{s}_sum"
+                        lines += [
+                            f"* BS: sum LP + HP outputs",
+                            f"Rsum1_{s}  {n_lp}  {n_sum}  {r_sum:.6g}",
+                            f"Rsum2_{s}  {n_hp}  {n_sum}  {r_sum:.6g}",
+                            f"X_Usum{s}  {n_sum}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                        ]
+                lines.append("")
+
+        # ── Deliyannis-Friend ─────────────────────────────────────────────────
+        case Topology.DELIYANNIS:
+            for s, comps in stages.items():
+                stype = next(iter(comps.values())).section_type
+                n_in  = "n_in" if s == 1 else f"n_s{s-1}_out"
+                n_out = f"n_s{s}_out"
+                n_mid = f"n_s{s}_mid"
+                n_inv = f"n_s{s}_inv"
+                lines.append(f"* ── Stage {s}  [{stype.value}] ──────────────")
+
+                if len(comps) == 2:
+                    # First-order RC
+                    r = (comps.get("R") or comps.get("R1")).rounded
+                    c = (comps.get("C") or comps.get("C1")).rounded
+                    n_rc = f"n_s{s}_rc"
+                    lines += [
+                        f"R1_{s}  {n_in}  {n_rc}  {r:.6g}",
+                        f"C1_{s}  {n_rc}  0       {c:.6g}",
+                        f"X_U{s}  {n_rc}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                    ]
+                elif stype == SectionType.BANDPASS:
+                    r1, r2 = comps["R1"].rounded, comps["R2"].rounded
+                    c1, c2 = comps["C1"].rounded, comps["C2"].rounded
+                    lines += [
+                        f"R1_{s}  {n_in}   {n_mid}  {r1:.6g}",
+                        f"C1_{s}  {n_mid}  {n_out}  {c1:.6g}",
+                        f"C2_{s}  {n_mid}  0        {c2:.6g}",
+                        f"R2_{s}  {n_out}  {n_inv}  {r2:.6g}",
+                        f"X_U{s}  0  {n_inv}  {n_out}  vcc  vee  {opamp}",
+                    ]
+                elif stype == SectionType.LOWPASS_2:
+                    r1, r2, r3 = comps["R1"].rounded, comps["R2"].rounded, comps["R3"].rounded
+                    c1, c2     = comps["C1"].rounded, comps["C2"].rounded
+                    lines += [
+                        f"R1_{s}  {n_in}   {n_mid}  {r1:.6g}",
+                        f"R2_{s}  {n_mid}  {n_inv}  {r2:.6g}",
+                        f"R3_{s}  {n_mid}  {n_inv}  {r3:.6g}",
+                        f"C1_{s}  {n_mid}  0        {c1:.6g}",
+                        f"C2_{s}  {n_inv}  {n_out}  {c2:.6g}",
+                        f"X_U{s}  0  {n_inv}  {n_out}  vcc  vee  {opamp}",
+                    ]
+                else:
+                    lines.append(f"* Stage {s}: {stype.value} not supported for Deliyannis — skipped")
+                lines.append("")
+
         case _:
-            print(f'debug (oscar): Topología {topology} aún no implementada')
-    raise NotImplementedError("STUDENT: implement generate_spice_netlist()")
+            raise ValueError(f"Unknown topology: {topology}")
+
+    lines += [
+        "* AC sweep",
+        ".ac  dec  100  1  10Meg",
+        f".probe  V(n_s{n_stages}_out)",
+        "",
+        ".end",
+    ]
+
+    return "\n".join(lines)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# ── STUDENT ENTRY POINT 9 ────────────────────────────────────────────────────
-# Run PySpice AC Simulation
-# ──────────────────────────────────────────────────────────────────────────────
+def _opamp_subckt(ic_model: str) -> tuple[str, str]:
+    """
+    Map GUI model name → (SPICE subcircuit name, .lib filepath).
+    Instructor-provided — do NOT modify.
+
+    Subcircuit pinout assumed throughout generate_spice_netlist:
+        X_Ux  <non_inv>  <inv>  <out>  vcc  vee  <subckt_name>
+    """
+    _MODELS = {
+        "Ideal":              ("IDEAL_OPAMP", "resources/spice_models/ideal_opamp.lib"),
+        "TL071":              ("TL071",        "resources/spice_models/tl071.lib"),
+        "LM741":              ("LM741",        "resources/spice_models/lm741.lib"),
+        "TL082":              ("TL082",        "resources/spice_models/tl082.lib"),
+        "UAF42 (Burr-Brown)": ("UAF42",        "resources/spice_models/uaf42.lib"),
+        "Custom SPICE…":      ("IDEAL_OPAMP",  "resources/spice_models/ideal_opamp.lib"),
+    }
+    return _MODELS.get(ic_model, ("IDEAL_OPAMP", "resources/spice_models/ideal_opamp.lib"))
+
 
 def run_spice_simulation(netlist: str) -> SimulationResult:
     """
     Execute an AC simulation via PySpice / ngspice and return the results.
+    Instructor-provided — do NOT modify.
 
     Parameters
     ----------
     netlist : str   – SPICE netlist from generate_spice_netlist()
-                      (must contain a .ac directive and at least one .probe line)
 
     Returns
     -------
@@ -1289,39 +1441,27 @@ def run_spice_simulation(netlist: str) -> SimulationResult:
         .magnitude_db : np.ndarray  dB
         .phase_deg    : np.ndarray  degrees
 
-    Notes
-    -----
-    Instructor-provided — do NOT modify.
-
-    Uses PySpice's SpiceServer, which pipes the netlist directly to ngspice
-    running in server mode (-s).  ngspice must be installed and on PATH.
-
-    The output node is extracted from the last .probe line in the netlist.
+    Requires ngspice to be installed and on PATH.
     """
     from PySpice.Spice.NgSpice.Server import SpiceServer
     from PySpice.Spice.RawFile import AcAnalysis
 
-    # ── Find the probed output node from the netlist ──────────────────────────
-    # We look for the last  ".probe V(node_name)"  line
+    # Extract output node from last .probe V(...) line
     probe_node = None
     for line in netlist.splitlines():
-        line = line.strip().lower()
-        if line.startswith(".probe") and "v(" in line:
-            # Extract node name from  .probe V(n_s2_out)
-            start = line.index("v(") + 2
-            end   = line.index(")", start)
-            probe_node = line[start:end]
+        stripped = line.strip().lower()
+        if stripped.startswith(".probe") and "v(" in stripped:
+            start = stripped.index("v(") + 2
+            end   = stripped.index(")", start)
+            probe_node = stripped[start:end]
 
     if probe_node is None:
-        raise ValueError("No .probe V(...) line found in netlist — "
-                         "cannot determine output node.")
+        raise ValueError("No .probe V(...) line found in netlist.")
 
-    # ── Run ngspice via PySpice SpiceServer ───────────────────────────────────
-    spice_server = SpiceServer()          # uses 'ngspice' on PATH by default
-    raw_file     = spice_server(netlist)  # blocks until simulation completes
+    # Run ngspice in server mode
+    raw_file = SpiceServer()(netlist)
 
-    # ── Extract AC analysis results ───────────────────────────────────────────
-    # raw_file contains one or more Analysis objects; we want the AcAnalysis
+    # Find AC analysis in results
     analysis = None
     for item in raw_file:
         if isinstance(item, AcAnalysis):
@@ -1329,25 +1469,11 @@ def run_spice_simulation(netlist: str) -> SimulationResult:
             break
 
     if analysis is None:
-        raise RuntimeError("ngspice did not produce an AC analysis result. "
-                           "Check the netlist .ac directive.")
+        raise RuntimeError("ngspice did not produce an AC analysis result.")
 
-    # Frequency axis (Hz)
-    frequencies = np.array(analysis.frequency)
-
-    # Output voltage — PySpice stores node voltages as complex arrays
-    # Node names are lower-case in the raw file
-    try:
-        v_out = np.array(analysis[probe_node])
-    except KeyError:
-        # Try without underscores or with 'v_' prefix variants
-        available = list(analysis.nodes.keys())
-        raise KeyError(
-            f"Node '{probe_node}' not found in simulation results.\n"
-            f"Available nodes: {available}"
-        )
-
-    magnitude_db = 20.0 * np.log10(np.abs(v_out) + 1e-300)  # guard log(0)
+    frequencies  = np.array(analysis.frequency)
+    v_out        = np.array(analysis[probe_node])
+    magnitude_db = 20.0 * np.log10(np.abs(v_out) + 1e-300)
     phase_deg    = np.degrees(np.unwrap(np.angle(v_out)))
 
     return SimulationResult(
