@@ -1227,12 +1227,16 @@ def generate_spice_netlist(
     for c in components:
         stages.setdefault(c.stage, {})[c.name] = c
 
-    n_stages   = len(stages)
-    opamp, lib = _opamp_subckt(ic_model)
+    n_stages              = len(stages)
+    opamp, lib, op_tmpl   = _opamp_subckt(ic_model)
+
+    def opamp_line(tag, n, i, o):
+        """Render an op-amp instance with the correct pin order for this model."""
+        return _opamp_instance(op_tmpl, tag, n, i, o)
 
     lines = [
         f"* Analog Filter — {topology.name}  IC: {ic_model}",
-        f".lib {lib}",
+        f".include {lib}",
         "",
         "* Supply rails",
         "Vcc  vcc  0  DC  15",
@@ -1262,7 +1266,7 @@ def generate_spice_netlist(
                         f"R2_{s}  {n_mid}  {n_out}  {r2:.6g}",
                         f"C1_{s}  {n_mid}  0        {c1:.6g}",
                         f"C2_{s}  {n_out}  {n_mid}  {c2:.6g}",
-                        f"X_U{s}  {n_out}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                        opamp_line(f"U{s}", n_out, n_out, n_out),
                     ]
                 elif stype == SectionType.HIGHPASS_2:
                     r1, r2 = comps["R1"].rounded, comps["R2"].rounded
@@ -1272,7 +1276,7 @@ def generate_spice_netlist(
                         f"C2_{s}  {n_mid}  {n_out}  {c2:.6g}",
                         f"R1_{s}  {n_mid}  0        {r1:.6g}",
                         f"R2_{s}  {n_out}  {n_mid}  {r2:.6g}",
-                        f"X_U{s}  {n_out}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                        opamp_line(f"U{s}", n_out, n_out, n_out),
                     ]
                 elif stype == SectionType.BANDSTOP:
                     r1, r2, r3 = comps["R1"].rounded, comps["R2"].rounded, comps["R3"].rounded
@@ -1285,7 +1289,7 @@ def generate_spice_netlist(
                         f"C2_{s}  {n_tee}  {n_out}  {c2:.6g}",
                         f"R3_{s}  {n_tee}  0        {r3:.6g}",
                         f"C3_{s}  {n_tee}  0        {c3:.6g}",
-                        f"X_U{s}  {n_out}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                        opamp_line(f"U{s}", n_out, n_out, n_out),
                     ]
                 elif stype in (SectionType.LOWPASS_1, SectionType.HIGHPASS_1):
                     r1, c1 = comps["R1"].rounded, comps["C1"].rounded
@@ -1299,7 +1303,7 @@ def generate_spice_netlist(
                             f"C1_{s}  {n_in}   {n_mid}  {c1:.6g}",
                             f"R1_{s}  {n_mid}  0        {r1:.6g}",
                         ]
-                    lines.append(f"X_U{s}  {n_mid}  {n_out}  {n_out}  vcc  vee  {opamp}")
+                    lines.append(opamp_line(f"U{s}", n_mid, n_out, n_out))
                 else:
                     lines.append(f"* Stage {s}: {stype.value} not supported for SK — skipped")
                 lines.append("")
@@ -1323,7 +1327,7 @@ def generate_spice_netlist(
                     lines += [
                         f"R1_{s}  {n_in}  {n_rc}  {rp:.6g}",
                         f"C1_{s}  {n_rc}  0       {cp:.6g}",
-                        f"X_U{s}  {n_rc}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                        opamp_line(f"U{s}", n_rc, n_out, n_out),
                     ]
                 else:
                     rg  = comps["RG"].rounded
@@ -1332,8 +1336,8 @@ def generate_spice_netlist(
                     rq  = comps["RQ"].rounded
                     tap = {"LP2": n_lp, "BP": n_bp, "HP2": n_hp}.get(stype.value, n_lp)
                     lines += [
-                        f"X_U{s}  {n_in}  {n_lp}  {n_bp}  {n_hp}  "
-                        f"0  {rq:.6g}  {rf1:.6g}  {rf2:.6g}  {rg:.6g}  vcc  vee  UAF42",
+                        f"* UAF42: pin1=LP pin7=BP pin13=HP pin12=VIN1 pin9=V- pin10=V+",
+                        f"X_U{s}  {n_lp}  0  0  0  0  0  {n_bp}  {rq:.6g}  vee  vcc  0  {n_in}  {n_hp}  {rf1:.6g}  UAF42",
                         f"Vwire_{s}  {tap}  {n_out}  DC 0",
                     ]
                     if stype == SectionType.BANDSTOP:
@@ -1343,7 +1347,7 @@ def generate_spice_netlist(
                             f"* BS: sum LP + HP outputs",
                             f"Rsum1_{s}  {n_lp}  {n_sum}  {r_sum:.6g}",
                             f"Rsum2_{s}  {n_hp}  {n_sum}  {r_sum:.6g}",
-                            f"X_Usum{s}  {n_sum}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                            opamp_line(f"Usum{s}", n_sum, n_out, n_out),
                         ]
                 lines.append("")
 
@@ -1365,7 +1369,7 @@ def generate_spice_netlist(
                     lines += [
                         f"R1_{s}  {n_in}  {n_rc}  {r:.6g}",
                         f"C1_{s}  {n_rc}  0       {c:.6g}",
-                        f"X_U{s}  {n_rc}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                        opamp_line(f"U{s}", n_rc, n_out, n_out),
                     ]
                 elif stype == SectionType.BANDPASS:
                     r1, r2 = comps["R1"].rounded, comps["R2"].rounded
@@ -1375,7 +1379,7 @@ def generate_spice_netlist(
                         f"C1_{s}  {n_mid}  {n_out}  {c1:.6g}",
                         f"C2_{s}  {n_mid}  0        {c2:.6g}",
                         f"R2_{s}  {n_out}  {n_inv}  {r2:.6g}",
-                        f"X_U{s}  0  {n_inv}  {n_out}  vcc  vee  {opamp}",
+                        opamp_line(f"U{s}", "0", n_inv, n_out),
                     ]
                 elif stype == SectionType.LOWPASS_2:
                     r1, r2, r3 = comps["R1"].rounded, comps["R2"].rounded, comps["R3"].rounded
@@ -1386,7 +1390,7 @@ def generate_spice_netlist(
                         f"R3_{s}  {n_mid}  {n_inv}  {r3:.6g}",
                         f"C1_{s}  {n_mid}  0        {c1:.6g}",
                         f"C2_{s}  {n_inv}  {n_out}  {c2:.6g}",
-                        f"X_U{s}  0  {n_inv}  {n_out}  vcc  vee  {opamp}",
+                        opamp_line(f"U{s}", "0", n_inv, n_out),
                     ]
                 else:
                     lines.append(f"* Stage {s}: {stype.value} not supported for Deliyannis — skipped")
@@ -1406,23 +1410,44 @@ def generate_spice_netlist(
     return "\n".join(lines)
 
 
-def _opamp_subckt(ic_model: str) -> tuple[str, str]:
+def _opamp_subckt(ic_model: str) -> tuple[str, str, str]:
     """
-    Map GUI model name → (SPICE subcircuit name, .lib filepath).
+    Map GUI model name → (SPICE subcircuit name, .mod filepath, pin_order).
     Instructor-provided — do NOT modify.
 
-    Subcircuit pinout assumed throughout generate_spice_netlist:
-        X_Ux  <non_inv>  <inv>  <out>  vcc  vee  <subckt_name>
+    pin_order is the ngspice instantiation template:
+        '{n}' = non-inverting input node
+        '{i}' = inverting input node
+        '{o}' = output node
+        '{p}' = positive supply node
+        '{m}' = negative supply node
+
+    LM741/NS pinout: non_inv  inv  V+   V-   out   → 1 2 99 50 28
+    TL081    pinout: non_inv  inv  V+   V-   out   → 1 2 3  4  5
+    UAF42    pinout: 14-pin IC — handled separately in generate_spice_netlist
     """
     _MODELS = {
-        "LM741":              ("LM741", "resources/spice_models/lm741.lib"),
-        "TL081":              ("TL081", "resources/spice_models/tl081.lib"),
-        "UAF42 (Burr-Brown)": ("UAF42", "resources/spice_models/uaf42.lib"),
+        "LM741":              ("LM741/NS", "resources/spice_models/lm741.mod",
+                               "X_{tag}  {n}  {i}  {p}  {m}  {o}  LM741/NS"),
+        "TL081":              ("TL081",    "resources/spice_models/tl081.mod",
+                               "X_{tag}  {n}  {i}  {p}  {m}  {o}  TL081"),
+        "UAF42 (Burr-Brown)": ("UAF42",   "resources/spice_models/uaf42.mod",
+                               None),   # UAF42 handled separately
     }
-    return _MODELS.get(ic_model, ("LM741", "resources/spice_models/lm741.lib"))
+    return _MODELS.get(ic_model, _MODELS["LM741"])
 
 
-def _find_ngspice() -> str:
+def _opamp_instance(template: str, tag: str, n: str, i: str, o: str,
+                    p: str = "vcc", m: str = "vee") -> str:
+    """
+    Render an op-amp instance line from the template in _opamp_subckt.
+    tag  = unique instance tag e.g. 'U1', 'Usum2'
+    n    = non-inverting input node
+    i    = inverting input node
+    o    = output node
+    p, m = positive / negative supply nodes
+    """
+    return template.format(tag=tag, n=n, i=i, o=o, p=p, m=m)
     """
     Locate the ngspice executable, searching conda prefix and common system paths.
     Instructor-provided — do NOT modify.
