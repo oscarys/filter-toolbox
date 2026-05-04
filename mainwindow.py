@@ -113,6 +113,7 @@ class MainWindow(QMainWindow):
         self._sim_result: SimulationResult | None = None
         self._sim_thread: QThread | None          = None
         self._sim_worker: SimWorker | None        = None
+        self._spice_items: list                   = []   # track SPICE overlay items
 
         self._setup_menu_bar()
         self._setup_plots()
@@ -459,6 +460,8 @@ class MainWindow(QMainWindow):
 
             # Store biquads so SOS checkbox can redraw without redesigning
             self._biquads = fd.factored_biquads(self._tf)
+            self._sim_result = None        # new design invalidates old simulation
+            self._spice_items.clear()
             if self.chkShowSOS.isChecked():
                 self._plot_sos_responses(self._biquads, self._f_start, self._f_stop)
 
@@ -555,11 +558,23 @@ class MainWindow(QMainWindow):
                 pw.addLegend()
 
     def _plot_simulated(self, result: SimulationResult) -> None:
+        # Remove previous SPICE overlay curves before adding new ones
+        for item in self._spice_items:
+            try:
+                item.getViewBox().removeItem(item)
+            except Exception:
+                pass
+        self._spice_items.clear()
+
         name = self._("legend_spice")
-        self._plot_mag.plot(result.frequencies, result.magnitude_db,
-                            pen=self._SPICE_PEN, name=name)
-        self._plot_phase.plot(result.frequencies, result.phase_deg,
-                              pen=self._SPICE_PEN, name=name)
+        self._spice_items.append(
+            self._plot_mag.plot(result.frequencies, result.magnitude_db,
+                                pen=self._SPICE_PEN, name=name)
+        )
+        self._spice_items.append(
+            self._plot_phase.plot(result.frequencies, result.phase_deg,
+                                  pen=self._SPICE_PEN, name=name)
+        )
 
     def _plot_sos_responses(self, biquads, f_start: float, f_stop: float) -> None:
         """Overlay individual SOS stage responses as thin solid lines with alpha."""
@@ -668,6 +683,7 @@ class MainWindow(QMainWindow):
         self._f_stop  = 1e6
         self._components = []
         self._sim_result = None
+        self._spice_items.clear()
         for pw in (self._plot_mag, self._plot_phase, self._plot_gd, self._plot_pz):
             pw.clear()
         self.tblComponents.setRowCount(0)
