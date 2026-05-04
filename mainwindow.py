@@ -306,7 +306,7 @@ class MainWindow(QMainWindow):
         self.lblCBase.setText(t("lbl_c_base"))
 
         self.tblComponents.setHorizontalHeaderLabels([
-            t("tbl_stage"), t("tbl_component"),
+            t("tbl_stage"), t("tbl_type"), t("tbl_component"),
             t("tbl_ideal"), t("tbl_rounded"), t("tbl_error"),
         ])
 
