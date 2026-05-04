@@ -1642,7 +1642,7 @@ def run_spice_simulation(netlist: str) -> SimulationResult:
             f"'frequency' variable not found in raw output.\n"
             f"Available variables: {available}"
         )
-    frequencies = np.array(freq_var.data, dtype=float)
+    frequencies = np.real(np.array(freq_var.data)).astype(float)
 
     # Output voltage — node names are lower-case in the raw file
     v_out = None
