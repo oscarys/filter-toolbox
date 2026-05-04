@@ -833,6 +833,9 @@ def synthesise_tow_thomas(
 
     components = []
 
+    # Valores internos/fijos del UAF42 usados en el análisis:
+    # R1 = R2 = R4 = R = 50kΩ
+    # y se elige RG = RQ = R
     R_INTERNAL = 50e3
     C = c_base
 
@@ -840,7 +843,11 @@ def synthesise_tow_thomas(
         stage = stage_idx + 1
         den = np.asarray(biquad.denominator, dtype=float)
 
-        # Caso A: sección de primer orden → RC sencillo
+        # ─────────────────────────────────────────────────────────────
+        # CASO A: sección de primer orden normal
+        # den = [a0, a1] → a0*s + a1
+        # ωc = a1/a0
+        # ─────────────────────────────────────────────────────────────
         if len(den) == 2:
             a0, a1 = den
 
@@ -851,9 +858,9 @@ def synthesise_tow_thomas(
             omega_c = abs(a1 / a0)
 
             CP = C
-            CP_r = round_to_eseries(CP, c_series)
-
             RP = 1.0 / (omega_c * CP)
+
+            CP_r = round_to_eseries(CP, c_series)
             RP_r = round_to_eseries(RP, r_series)
 
             for name, val, val_r, ctype in (
@@ -879,7 +886,55 @@ def synthesise_tow_thomas(
 
             continue
 
-        # Caso B: sección de segundo orden → Tow-Thomas / UAF42
+        # ─────────────────────────────────────────────────────────────
+        # CASO B: sección de primer orden disfrazada
+        # scipy.tf2sos puede devolver den = [0, a1, a2]
+        # que equivale a a1*s + a2
+        # ─────────────────────────────────────────────────────────────
+        if len(den) == 3 and abs(den[0]) < 1e-12:
+            a0, a1, a2 = den
+
+            if abs(a1) < 1e-12:
+                print(f"debug stage {stage}: sección degenerada, saltando")
+                continue
+
+            omega_c = abs(a2 / a1)
+
+            CP = C
+            RP = 1.0 / (omega_c * CP)
+
+            CP_r = round_to_eseries(CP, c_series)
+            RP_r = round_to_eseries(RP, r_series)
+
+            for name, val, val_r, ctype in (
+                ("CP", CP, CP_r, ComponentType.CAPACITOR),
+                ("RP", RP, RP_r, ComponentType.RESISTOR),
+            ):
+                components.append(ComponentValue(
+                    stage          = stage,
+                    name           = name,
+                    component_type = ctype,
+                    ideal          = val,
+                    rounded        = val_r,
+                    error_pct      = eseries_error_pct(val, val_r),
+                    section_type   = biquad.section_type,
+                    filter_type    = biquad.filter_type,
+                ))
+
+            print(
+                f"debug stage {stage}: 1er orden  "
+                f"ωc={omega_c:.2f} rad/s, "
+                f"RP={RP:.2f}Ω, CP={CP:.2e}F"
+            )
+
+            continue
+
+        # ─────────────────────────────────────────────────────────────
+        # CASO C: sección de segundo orden Tow-Thomas / UAF42
+        # den = [a0, a1, a2] → a0*s² + a1*s + a2
+        # normalizado:
+        # s² + (ω0/Q)s + ω0²
+        # ─────────────────────────────────────────────────────────────
         if len(den) == 3:
             a0, a1, a2 = den
 
@@ -890,33 +945,25 @@ def synthesise_tow_thomas(
             omega_0 = np.sqrt(abs(a2 / a0))
             Q = np.sqrt(abs(a0 * a2)) / abs(a1)
 
-            RF1 = 1.0 / (omega_0 * C)
-            RF2 = 1.0 / (omega_0 * C)
+            # Ecuaciones correctas con RG = RQ = R:
+            # ω0/Q = 3/(2 C RF1)
+            # ω0²  = 1/(C² RF1 RF2)
+            RF1 = (3.0 * Q) / (2.0 * C * omega_0)
+            RF2 = 2.0 / (3.0 * Q * C * omega_0)
 
             RG = R_INTERNAL
-
-            factor = (2.0 * RG + R_INTERNAL) / RG
-            denominator_rq = factor * Q - 1.0
-
-            if denominator_rq <= 0:
-                print(
-                    f"debug stage {stage}: Q={Q:.4f} no realizable "
-                    f"con RG={RG:.2f}Ω, saltando"
-                )
-                continue
-
-            RQ = R_INTERNAL / denominator_rq
+            RQ = R_INTERNAL
 
             RG_r  = round_to_eseries(RG,  r_series)
+            RQ_r  = round_to_eseries(RQ,  r_series)
             RF1_r = round_to_eseries(RF1, r_series)
             RF2_r = round_to_eseries(RF2, r_series)
-            RQ_r  = round_to_eseries(RQ,  r_series)
 
             for name, val, val_r in (
                 ("RG",  RG,  RG_r),
+                ("RQ",  RQ,  RQ_r),
                 ("RF1", RF1, RF1_r),
                 ("RF2", RF2, RF2_r),
-                ("RQ",  RQ,  RQ_r),
             ):
                 components.append(ComponentValue(
                     stage          = stage,
@@ -935,14 +982,13 @@ def synthesise_tow_thomas(
                 f"ω0={omega_0:.2f} rad/s, "
                 f"f0={omega_0/(2*np.pi):.2f} Hz, "
                 f"Q={Q:.4f}, "
-                f"RG={RG:.2f}Ω, RF1={RF1:.2f}Ω, "
-                f"RF2={RF2:.2f}Ω, RQ={RQ:.2f}Ω"
+                f"RG={RG:.2f}Ω, RQ={RQ:.2f}Ω, "
+                f"RF1={RF1:.2f}Ω, RF2={RF2:.2f}Ω"
             )
 
             continue
 
     return components
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ── STUDENT ENTRY POINT 7 ────────────────────────────────────────────────────
