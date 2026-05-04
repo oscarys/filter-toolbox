@@ -1230,42 +1230,286 @@ def generate_spice_netlist(
     Returns
     -------
     str  – complete SPICE netlist ready to write to a .cir file.
-
-    Notes
-    -----
-    ── STUDENT CODE ──
-    Each ComponentValue carries:
-      .name            — "R1", "C2", etc.
-      .component_type  — ComponentType.RESISTOR or ComponentType.CAPACITOR
-      .stage           — which biquad stage (1-indexed)
-      .rounded         — the E-series value to use in the netlist
-      .section_type    — SectionType.LP2 / BP / HP2 / BS / LP1 / HP1 etc.
-      .filter_type     — FilterType.LOWPASS / BANDPASS / etc. (global context)
-
-    Suggested approach:
-      1. Group components by stage:
-             from itertools import groupby
-             stages = {s: list(g) for s, g in groupby(components, key=lambda c: c.stage)}
-      2. For each stage, read stages[s][0].section_type to pick the subcircuit
-         template (LP Sallen-Key, BP Deliyannis, etc.)
-      3. Within the stage, identify each component by .name ("R1", "C1", …)
-         and use .rounded as the value in the netlist line.
-      4. Wire stages in cascade: out of stage N → in of stage N+1.
-
-    Include in the netlist:
-      * .ac dec 100 {f_start} {f_stop}
-      * Voltage source Vin ac 1
-      * Op-amp subcircuit from resources/spice_models/{ic_model}.lib
-      * .probe V(out)
     """
+    # ── Group components by stage, keyed by name ──────────────────────────────
+    stages: dict[int, dict[str, ComponentValue]] = {}
+    for c in components:
+        stages.setdefault(c.stage, {})[c.name] = c
+
+    n_stages   = len(stages)
+    opamp, lib = _opamp_subckt(ic_model)
+
+    lines = []
+    lines += [
+        f"* Analog Filter — {topology.name}  IC: {ic_model}",
+        f".lib {lib}",
+        "",
+        "* Supply rails",
+        "Vcc  vcc  0  DC  15",
+        "Vee  vee  0  DC -15",
+        "",
+        "* AC input source",
+        "Vin  n_in  0  AC 1  DC 0",
+        "",
+    ]
+
     match topology:
-        case Topology.DELIYANNIS:              
-            for component in components:
-                print(f'debug (xoscar) Components: {component.name}{component.stage} = {component.rounded}')
-            print(f'debug (oscar) IC: {ic_model}')
+
+        # ── Sallen-Key ────────────────────────────────────────────────────────
+        case Topology.SALLEN_KEY:
+            for s, comps in stages.items():
+                stype  = next(iter(comps.values())).section_type
+                n_in   = "n_in" if s == 1 else f"n_s{s-1}_out"
+                n_out  = f"n_s{s}_out"
+                n_mid  = f"n_s{s}_mid"
+
+                lines.append(f"* ── Stage {s}  [{stype.value}] ──────────────")
+
+                if stype in (SectionType.LOWPASS_2, SectionType.BANDPASS):
+                    # Equal-C Sallen-Key LP / MFB BP
+                    # n_in --R1-- n_mid --R2-- n_out(+)
+                    #              |                |
+                    #             C1               C2
+                    #              |                |
+                    #             GND             GND
+                    # op-amp unity gain: (+)→out, (-)→out (follower)
+                    r1 = comps["R1"].rounded
+                    r2 = comps["R2"].rounded
+                    c1 = comps["C1"].rounded
+                    c2 = comps["C2"].rounded
+                    lines += [
+                        f"R1_{s}  {n_in}   {n_mid}  {r1:.6g}",
+                        f"R2_{s}  {n_mid}  {n_out}  {r2:.6g}",
+                        f"C1_{s}  {n_mid}  0        {c1:.6g}",
+                        f"C2_{s}  {n_out}  {n_mid}  {c2:.6g}",
+                        f"* unity-gain buffer: (+)={n_out} (-)=out={n_out}",
+                        f"X_U{s}  {n_out}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                    ]
+
+                elif stype == SectionType.HIGHPASS_2:
+                    # Equal-R Sallen-Key HP (R↔C swapped vs LP)
+                    # n_in --C1-- n_mid --C2-- n_out(+)
+                    #              |                |
+                    #             R1               R2
+                    #              |                |
+                    #             GND             GND
+                    r1 = comps["R1"].rounded
+                    r2 = comps["R2"].rounded
+                    c1 = comps["C1"].rounded
+                    c2 = comps["C2"].rounded
+                    lines += [
+                        f"C1_{s}  {n_in}   {n_mid}  {c1:.6g}",
+                        f"C2_{s}  {n_mid}  {n_out}  {c2:.6g}",
+                        f"R1_{s}  {n_mid}  0        {r1:.6g}",
+                        f"R2_{s}  {n_out}  {n_mid}  {r2:.6g}",
+                        f"X_U{s}  {n_out}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                    ]
+
+                elif stype == SectionType.BANDSTOP:
+                    # Twin-T notch + unity-gain buffer
+                    # Standard twin-T: R1, R2, R3=R/2, C1, C2, C3=2C
+                    r1 = comps["R1"].rounded
+                    r2 = comps["R2"].rounded
+                    r3 = comps["R3"].rounded
+                    c1 = comps["C1"].rounded
+                    c2 = comps["C2"].rounded
+                    c3 = comps["C3"].rounded
+                    n_tee = f"n_s{s}_tee"
+                    lines += [
+                        f"R1_{s}  {n_in}   {n_tee}  {r1:.6g}",
+                        f"R2_{s}  {n_tee}  {n_out}  {r2:.6g}",
+                        f"C1_{s}  {n_in}   {n_tee}  {c1:.6g}",
+                        f"C2_{s}  {n_tee}  {n_out}  {c2:.6g}",
+                        f"R3_{s}  {n_tee}  0        {r3:.6g}",
+                        f"C3_{s}  {n_tee}  0        {c3:.6g}",
+                        f"X_U{s}  {n_out}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                    ]
+
+                elif stype in (SectionType.LOWPASS_1, SectionType.HIGHPASS_1):
+                    # Simple RC + voltage follower
+                    r1 = comps["R1"].rounded
+                    c1 = comps["C1"].rounded
+                    if stype == SectionType.LOWPASS_1:
+                        lines += [
+                            f"R1_{s}  {n_in}   {n_mid}  {r1:.6g}",
+                            f"C1_{s}  {n_mid}  0        {c1:.6g}",
+                        ]
+                    else:
+                        lines += [
+                            f"C1_{s}  {n_in}   {n_mid}  {c1:.6g}",
+                            f"R1_{s}  {n_mid}  0        {r1:.6g}",
+                        ]
+                    lines += [
+                        f"X_U{s}  {n_mid}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                    ]
+
+                else:
+                    lines.append(f"* Stage {s}: section type {stype.value} "
+                                 f"not yet implemented — skipped")
+
+                lines.append("")
+
+        # ── Tow-Thomas / UAF42 ────────────────────────────────────────────────
+        case Topology.TOW_THOMAS:
+            # UAF42 subcircuit pinout (Burr-Brown/TI):
+            #   X_U  IN  LP  BP  HP  GND  RQ  RF1  RF2  RG  V+  V-  UAF42
+            for s, comps in stages.items():
+                stype = next(iter(comps.values())).section_type
+                n_in  = "n_in" if s == 1 else f"n_s{s-1}_out"
+                n_lp  = f"n_s{s}_lp"
+                n_bp  = f"n_s{s}_bp"
+                n_hp  = f"n_s{s}_hp"
+
+                # Choose output tap based on section type
+                tap = {"LP2": n_lp, "BP": n_bp, "HP2": n_hp,
+                       "BS": n_lp}.get(stype.value, n_lp)
+                n_out = f"n_s{s}_out"
+
+                rg  = comps["RG"].rounded
+                rf1 = comps["RF1"].rounded
+                rf2 = comps["RF2"].rounded
+                rq  = comps["RQ"].rounded
+                c   = comps.get("C1", comps.get("CP")).rounded \
+                      if "C1" in comps or "CP" in comps else 1e-8
+
+                lines.append(f"* ── Stage {s}  [{stype.value}] ──────────────")
+
+                if len(comps) == 2:
+                    # First-order section: simple RC
+                    rp = comps.get("RP", comps.get("R1")).rounded
+                    cp = comps.get("CP", comps.get("C1")).rounded
+                    n_rc = f"n_s{s}_rc"
+                    lines += [
+                        f"R1_{s}  {n_in}  {n_rc}  {rp:.6g}",
+                        f"C1_{s}  {n_rc}  0       {cp:.6g}",
+                        f"X_U{s}  {n_rc}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                    ]
+                else:
+                    # Second-order UAF42 section
+                    # Wire the chosen output tap to n_out with a wire (0Ω)
+                    lines += [
+                        f"X_U{s}  {n_in}  {n_lp}  {n_bp}  {n_hp}  "
+                        f"0  {rq:.6g}  {rf1:.6g}  {rf2:.6g}  {rg:.6g}  "
+                        f"vcc  vee  UAF42",
+                        f"Vwire_{s}  {tap}  {n_out}  DC 0",
+                    ]
+
+                    if stype == SectionType.BANDSTOP:
+                        # Sum LP and HP outputs through equal resistors
+                        n_sum = f"n_s{s}_sum"
+                        r_sum = 10e3
+                        lines += [
+                            f"* BS: sum LP + HP",
+                            f"Rsum1_{s}  {n_lp}  {n_sum}  {r_sum:.6g}",
+                            f"Rsum2_{s}  {n_hp}  {n_sum}  {r_sum:.6g}",
+                            f"X_Usum{s}  {n_sum}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                        ]
+
+                lines.append("")
+
+        # ── Deliyannis-Friend ─────────────────────────────────────────────────
+        case Topology.DELIYANNIS:
+            for s, comps in stages.items():
+                stype = next(iter(comps.values())).section_type
+                n_in  = "n_in" if s == 1 else f"n_s{s-1}_out"
+                n_out = f"n_s{s}_out"
+                n_mid = f"n_s{s}_mid"
+                n_inv = f"n_s{s}_inv"
+
+                lines.append(f"* ── Stage {s}  [{stype.value}] ──────────────")
+
+                if len(comps) == 2:
+                    # First-order RC section
+                    r = comps["R"].rounded if "R" in comps else comps["R1"].rounded
+                    c = comps["C"].rounded if "C" in comps else comps["C1"].rounded
+                    n_rc = f"n_s{s}_rc"
+                    lines += [
+                        f"R1_{s}  {n_in}  {n_rc}  {r:.6g}",
+                        f"C1_{s}  {n_rc}  0       {c:.6g}",
+                        f"X_U{s}  {n_rc}  {n_out}  {n_out}  vcc  vee  {opamp}",
+                    ]
+
+                elif stype == SectionType.BANDPASS:
+                    # Deliyannis-Friend BP:
+                    #   n_in --R1-- n_mid --C1-- n_out
+                    #               |
+                    #              C2
+                    #               |
+                    #              GND
+                    #   n_out --R2-- n_inv (inv input)
+                    #   non-inv input → GND
+                    r1 = comps["R1"].rounded
+                    r2 = comps["R2"].rounded
+                    c1 = comps["C1"].rounded
+                    c2 = comps["C2"].rounded
+                    lines += [
+                        f"R1_{s}  {n_in}   {n_mid}  {r1:.6g}",
+                        f"C1_{s}  {n_mid}  {n_out}  {c1:.6g}",
+                        f"C2_{s}  {n_mid}  0        {c2:.6g}",
+                        f"R2_{s}  {n_out}  {n_inv}  {r2:.6g}",
+                        f"X_U{s}  0  {n_inv}  {n_out}  vcc  vee  {opamp}",
+                    ]
+
+                elif stype == SectionType.LOWPASS_2:
+                    # Friend LP (MFB lowpass, 3R 2C):
+                    #   n_in --R1-- n_mid --R2-- n_inv
+                    #               |              |
+                    #              C1             C2
+                    #               |              |
+                    #              GND           n_out (op-amp output)
+                    #   R3: n_mid to n_inv (feedback path)
+                    r1 = comps["R1"].rounded
+                    r2 = comps["R2"].rounded
+                    r3 = comps["R3"].rounded
+                    c1 = comps["C1"].rounded
+                    c2 = comps["C2"].rounded
+                    lines += [
+                        f"R1_{s}  {n_in}   {n_mid}  {r1:.6g}",
+                        f"R2_{s}  {n_mid}  {n_inv}  {r2:.6g}",
+                        f"R3_{s}  {n_mid}  {n_inv}  {r3:.6g}",
+                        f"C1_{s}  {n_mid}  0        {c1:.6g}",
+                        f"C2_{s}  {n_inv}  {n_out}  {c2:.6g}",
+                        f"X_U{s}  0  {n_inv}  {n_out}  vcc  vee  {opamp}",
+                    ]
+
+                else:
+                    lines.append(f"* Stage {s}: section type {stype.value} "
+                                 f"not supported for Deliyannis — skipped")
+
+                lines.append("")
+
         case _:
-            print(f'debug (oscar): Topología {topology} aún no implementada')
-    raise NotImplementedError("STUDENT: implement generate_spice_netlist()")
+            raise ValueError(f"Unknown topology: {topology}")
+
+    # ── AC analysis and .end ──────────────────────────────────────────────────
+    lines += [
+        f"* AC sweep",
+        f".ac  dec  100  1  10Meg",
+        f".probe  V(n_s{n_stages}_out)",
+        "",
+        ".end",
+    ]
+
+    return "\n".join(lines)
+
+
+def _opamp_subckt(ic_model: str) -> tuple[str, str]:
+    """
+    Map GUI model name → (SPICE subcircuit name, .lib filepath).
+    Instructor-provided — do NOT modify.
+
+    Subcircuit pinout assumed throughout generate_spice_netlist:
+        X_Ux  <non_inv>  <inv>  <out>  vcc  vee  <subckt_name>
+    """
+    _MODELS = {
+        "Ideal":              ("IDEAL_OPAMP", "resources/spice_models/ideal_opamp.lib"),
+        "TL071":              ("TL071",        "resources/spice_models/tl071.lib"),
+        "LM741":              ("LM741",        "resources/spice_models/lm741.lib"),
+        "TL082":              ("TL082",        "resources/spice_models/tl082.lib"),
+        "UAF42 (Burr-Brown)": ("UAF42",        "resources/spice_models/uaf42.lib"),
+        "Custom SPICE…":      ("IDEAL_OPAMP", "resources/spice_models/ideal_opamp.lib"),
+    }
+    return _MODELS.get(ic_model, ("IDEAL_OPAMP", "resources/spice_models/ideal_opamp.lib"))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
