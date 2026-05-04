@@ -668,6 +668,10 @@ def synthesise_sallen_key(
         #Necesario cuando el biquad venia con cero lider y section_type incorrecto
         stype = _classify_section(num_work, den_work)
 
+        print(f" [synthesise] Etapa {stage_num}: "
+              f"section_type original = {biquad.section_type.value} ->" 
+              f"corregido = {stype.value} "
+              f"num= {np.round(num_work, 4)} den = {np.round(den_work, 4)}") 
         #Normaliza coeficiente lider del denominador a 1
         den = den_work / den_work[0]
         
