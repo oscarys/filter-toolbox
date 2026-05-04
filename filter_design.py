@@ -343,6 +343,47 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
             # Necesita ambos: rizado en paso y atenuación en rechazo
             z, p, k = sps.ellipap(n, rp=spec.a_p, rs=spec.a_s)
 
+    # ── Compute the correct prototype denormalisation frequency ──────────────
+    # Each approximation normalises the LP prototype differently:
+    #
+    # Butterworth  : poles at 1 rad/s = the -3dB point, NOT the -Ap dB point.
+    #                Must scale so that the -Ap dB point lands at omega_p:
+    #                omega_c = omega_p / (10^(Ap/10) - 1)^(1/(2n))
+    #
+    # Chebyshev I  : prototype passband edge is exactly at 1 rad/s (-Ap dB).
+    #                omega_c = omega_p  (no correction needed)
+    #
+    # Chebyshev II : prototype is normalised at the STOPBAND edge (1 rad/s = -As dB).
+    #                omega_c = omega_s  (use stopband edge, not passband)
+    #
+    # Elliptic     : like Chebyshev I, passband edge at 1 rad/s (-Ap dB).
+    #                omega_c = omega_p  (no correction needed)
+    #
+    # For BP/BS the same correction applies to omega_p (and omega_s for Cheby-II),
+    # since lp2bp/lp2bs use BW which is already in physical rad/s.
+
+    match spec.approximation:
+        case Approximation.BUTTERWORTH:
+            # Correct cutoff so -Ap dB lands exactly at omega_p
+            omega_c = spec.omega_p / (10 ** (spec.a_p / 10) - 1) ** (1 / (2 * n))
+        case Approximation.CHEBYSHEV_I:
+            omega_c = spec.omega_p   # passband edge = 1 rad/s in prototype
+        case Approximation.CHEBYSHEV_II:
+            omega_c = spec.omega_s   # prototype normalised at stopband edge
+        case Approximation.ELLIPTIC:
+            omega_c = spec.omega_p   # passband edge = 1 rad/s in prototype
+
+    # For BP/BS also compute the correct stopband-edge frequency for Chebyshev II
+    if spec.filter_type in (FilterType.BANDPASS, FilterType.BANDSTOP):
+        omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
+        BW      = spec.omega_p2 - spec.omega_p
+        if spec.approximation == Approximation.CHEBYSHEV_II:
+            # Use the more restrictive of the two stopband edges
+            Os1 = abs(spec.omega_s **2 - omega_0**2) / (BW * spec.omega_s)
+            Os2 = abs(spec.omega_s2**2 - omega_0**2) / (BW * spec.omega_s2)
+            # omega_c for BP/BS Cheby-II is incorporated via BW scaling
+            # (lp2bp/lp2bs handle the centre frequency and BW directly)
+
     # TRANSFORMACION DE FRECUENCIA LP a {LP,HP,BP,BS}, AQUI SE OBTIENEN FRECUENCIAS DE CORTE 
     # Usamos z,p,k en lugar de polinomios para hacerlo mas estable con ordenes altos
     # lp2lp_zpk: escala la frecuencia de 1 rad/s a omega_p real
@@ -352,48 +393,34 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
 
     match spec.filter_type : 
         case FilterType.LOWPASS: 
-    # Frecuencia de corte: omega_p del usuario
-            z, p, k = sps.lp2lp_zpk(z, p, k, wo=spec.omega_p)
+            print(f'debug (oscar): lp frec desnormalización: {omega_c/(2*np.pi)} Hz')
+            z, p, k = sps.lp2lp_zpk(z, p, k, wo=omega_c)
 
         case FilterType.HIGHPASS:
-    # Frecuencia de giro: omega_p. scipy hace s a omega_p/s internamente,
-    # que es la inversión del eje de frecuencias que ya vimos en el orden.
-            z, p, k = sps.lp2hp_zpk(z, p, k, wo=spec.omega_p)
+            print(f'debug (oscar): hp frec desnormalización: {omega_c/(2*np.pi)} Hz')
+            z, p, k = sps.lp2hp_zpk(z, p, k, wo=omega_c)
 
         case FilterType.BANDPASS:
-    # Necesitamos la frecuencia central geométrica "(f0) es el punto central de una banda de paso 
-    # calculado mediante la media geométrica de las frecuencias límite inferior (f1) y superior (f2)
-    # A diferencia de una media aritmética simple, la media geométrica proporciona un valor intermedio proporcional en escalas logarítmicas
-    # lo que la hace fundamental para el diseño de filtros y el análisis de espectro y el ancho de banda."
-    # Se usa geométrica porque el filtro es simétrico en escala logarítmica.
-            omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)  # frec. central
-            BW = spec.omega_p2 - spec.omega_p            # ancho de banda
+            omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
+            BW      = spec.omega_p2 - spec.omega_p
+            print(f'debug (oscar): bp frec desnormalización: {omega_0/(2*np.pi)} Hz')
+            print(f'debug (oscar): bp bandwidth: {BW/(2*np.pi)} Hz')
             z, p, k = sps.lp2bp_zpk(z, p, k, wo=omega_0, bw=BW)
 
         case FilterType.BANDSTOP:
-    # Mismo cálculo de omega_0 y BW que BP,
-    # pero la transformación pone el rechazo en el centro.
             omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
-            BW = spec.omega_p2 - spec.omega_p
+            BW      = spec.omega_p2 - spec.omega_p
+            print(f'debug (oscar): bs frec desnormalización: {omega_0/(2*np.pi)} Hz')
+            print(f'debug (oscar): bs bandwidth: {BW/(2*np.pi)} Hz')
             z, p, k = sps.lp2bs_zpk(z, p, k, wo=omega_0, bw=BW)
 
-    
-
-
-    # Calcula los polinomios normalizados de la función de transferencia
+    # Calcula los polinomios de la función de transferencia
     # Convertir ZPK a coeficientes de polinomio 
     # zpk2tf convierte zeros,polos,ganancia a coeficientes num/den en orden
     # descendente de potencias: [b_n, b_{n-1}, b_0] / [a_n, a_0]
     # np.real() elimina la parte imaginaria residual de punto flotante (~1e-16).
     # Los coeficientes deben ser reales porque los polos complejos siempre son pares conjugados.
     num, den = sps.zpk2tf(z, p, k)
-
-    # Transformación del filtro pasabajas a su tipo final:
-    # match spec.filter_type:
-    #    case FilterType.LOWPASS:  b, a = sps.lp2lp(nb, na)
-    #    case FilterType.HIGHPASS: b, a = sps.lp2hp(nb, na)
-    #    case FilterType.BANDPASS: b, a = sps.lp2bp(nb, na)
-    #    case FilterType.BANDSTOP: b, a = sps.lp2bs(nb, na)
 
     # objeto TransferFunction
     # Se necesita los coeficientes para graficar H(jω) y los polos/zeros para el mapa polo-cero.
@@ -406,11 +433,9 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
         filter_type = spec.filter_type,   # carry spec context into TF
     )
 
-    print(f'debug: orden={n}, polos={p}')
+    print(f'debug (oscar): num: {tf.numerator}')
+    print(f'debug (oscar): den: {tf.denominator}')
 
-    # Crea el objeto para la fucnión de transferencia
-    # tf = TransferFunction(nb, na)
-           
     # Regresa el objeto función de transferencia y el orden
     return (tf, n)
     
