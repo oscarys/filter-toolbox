@@ -1230,9 +1230,13 @@ def generate_spice_netlist(
     n_stages              = len(stages)
     opamp, lib, op_tmpl   = _opamp_subckt(ic_model)
 
+    # For UAF42 topology, the summing amp uses the internal AMP_UAF subcircuit
+    # (pinout: non_inv  inv  V+  V-  out — same as a regular op-amp)
+    _aux_tmpl = op_tmpl or "X_{tag}  {n}  {i}  {p}  {m}  {o}  AMP_UAF"
+
     def opamp_line(tag, n, i, o):
         """Render an op-amp instance with the correct pin order for this model."""
-        return _opamp_instance(op_tmpl, tag, n, i, o)
+        return _opamp_instance(_aux_tmpl, tag, n, i, o)
 
     lines = [
         f"* Analog Filter — {topology.name}  IC: {ic_model}",
@@ -1317,37 +1321,67 @@ def generate_spice_netlist(
                 n_bp  = f"n_s{s}_bp"
                 n_hp  = f"n_s{s}_hp"
                 n_out = f"n_s{s}_out"
+                # Aux amp nodes (pins 4, 5, 6 of UAF42)
+                n_aux_ni  = f"n_s{s}_aux_ni"   # pin 4 non-inv input
+                n_aux_inv = f"n_s{s}_aux_inv"  # pin 5 inv input
+                n_aux_out = f"n_s{s}_aux_out"  # pin 6 output
                 lines.append(f"* ── Stage {s}  [{stype.value}] ──────────────")
 
-                if len(comps) == 2:
-                    # First-order RC + follower
+                if stype in (SectionType.LOWPASS_1, SectionType.HIGHPASS_1):
+                    # Odd-order first-order section — use UAF42 aux amp as follower
+                    # Wire RC to aux amp non-inv input; connect inv to output (follower)
                     rp = (comps.get("RP") or comps.get("R1")).rounded
                     cp = (comps.get("CP") or comps.get("C1")).rounded
                     n_rc = f"n_s{s}_rc"
+                    if stype == SectionType.LOWPASS_1:
+                        lines += [
+                            f"R1_{s}  {n_in}  {n_rc}  {rp:.6g}",
+                            f"C1_{s}  {n_rc}  0       {cp:.6g}",
+                        ]
+                    else:
+                        lines += [
+                            f"C1_{s}  {n_in}  {n_rc}  {cp:.6g}",
+                            f"R1_{s}  {n_rc}  0       {rp:.6g}",
+                        ]
                     lines += [
-                        f"R1_{s}  {n_in}  {n_rc}  {rp:.6g}",
-                        f"C1_{s}  {n_rc}  0       {cp:.6g}",
-                        opamp_line(f"U{s}", n_rc, n_out, n_out),
+                        f"* UAF42 aux amp as voltage follower (pins 4,5,6)",
+                        f"* pin1=LP pin4=aux_ni pin5=aux_inv pin6=aux_out",
+                        f"* pin7=BP pin9=V- pin10=V+ pin13=HP",
+                        f"X_U{s}  {n_lp}  0  0  {n_rc}  {n_aux_inv}  {n_aux_out}  {n_bp}  0  vee  vcc  0  0  {n_hp}  0  UAF42",
+                        f"* aux amp follower: inv tied to output",
+                        f"Rfb_{s}  {n_aux_out}  {n_aux_inv}  0",
+                        f"Vwire_{s}  {n_aux_out}  {n_out}  DC 0",
                     ]
+
                 else:
                     rg  = comps["RG"].rounded
                     rf1 = comps["RF1"].rounded
                     rf2 = comps["RF2"].rounded
                     rq  = comps["RQ"].rounded
                     tap = {"LP2": n_lp, "BP": n_bp, "HP2": n_hp}.get(stype.value, n_lp)
-                    lines += [
-                        f"* UAF42: pin1=LP pin7=BP pin13=HP pin12=VIN1 pin9=V- pin10=V+",
-                        f"X_U{s}  {n_lp}  0  0  0  0  0  {n_bp}  {rq:.6g}  vee  vcc  0  {n_in}  {n_hp}  {rf1:.6g}  UAF42",
-                        f"Vwire_{s}  {tap}  {n_out}  DC 0",
-                    ]
+
                     if stype == SectionType.BANDSTOP:
+                        # BS: use aux amp to sum LP + HP outputs
+                        # Aux amp non-inv = 0 (GND), inv = summing node, out = n_out
                         r_sum = 10e3
                         n_sum = f"n_s{s}_sum"
                         lines += [
-                            f"* BS: sum LP + HP outputs",
+                            f"* UAF42: pin1=LP pin4=aux_ni pin5=aux_inv pin6=aux_out",
+                            f"* pin7=BP pin9=V- pin10=V+ pin13=HP",
+                            f"X_U{s}  {n_lp}  0  0  0  {n_sum}  {n_aux_out}  {n_bp}  {rq:.6g}  vee  vcc  0  {n_in}  {n_hp}  {rf1:.6g}  UAF42",
+                            f"* BS: sum LP + HP into aux amp inverting input",
                             f"Rsum1_{s}  {n_lp}  {n_sum}  {r_sum:.6g}",
                             f"Rsum2_{s}  {n_hp}  {n_sum}  {r_sum:.6g}",
-                            opamp_line(f"Usum{s}", n_sum, n_out, n_out),
+                            f"Rfb_{s}    {n_aux_out}  {n_sum}  {r_sum:.6g}",
+                            f"Vwire_{s}  {n_aux_out}  {n_out}  DC 0",
+                        ]
+                    else:
+                        # Standard LP / BP / HP — aux amp pins left unconnected (to 0)
+                        lines += [
+                            f"* UAF42: pin1=LP pin4=aux_ni pin5=aux_inv pin6=aux_out",
+                            f"* pin7=BP pin9=V- pin10=V+ pin13=HP",
+                            f"X_U{s}  {n_lp}  0  0  0  0  0  {n_bp}  {rq:.6g}  vee  vcc  0  {n_in}  {n_hp}  {rf1:.6g}  UAF42",
+                            f"Vwire_{s}  {tap}  {n_out}  DC 0",
                         ]
                 lines.append("")
 
