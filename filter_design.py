@@ -1639,13 +1639,13 @@ def run_spice_simulation(netlist: str) -> SimulationResult:
     Execute an AC simulation via ngspice and return the results.
     Instructor-provided — do NOT modify.
 
-    Runs ngspice in server mode (-s), strips any preamble warnings from
-    stdout, then parses the binary raw data with PySpice's NgSpice.RawFile.
+    Writes the netlist to a temp file, runs ngspice -b (batch mode),
+    saves the raw output to a second temp file, then parses it with
+    PySpice's RawFile. This avoids all stdout-parsing fragility.
 
     Requires ngspice to be installed and findable by _find_ngspice().
     """
-    import subprocess, re
-    from PySpice.Spice.NgSpice.RawFile import RawFile as NgRawFile
+    import subprocess, tempfile, os, re
 
     # ── Extract output node from last .probe V(...) line ─────────────────────
     probe_node = None
@@ -1659,152 +1659,138 @@ def run_spice_simulation(netlist: str) -> SimulationResult:
     if probe_node is None:
         raise ValueError("No .probe V(...) line found in netlist.")
 
-    # ── Run ngspice -s (server / batch stdin mode) ────────────────────────────
     ngspice = _find_ngspice()
-    process = subprocess.Popen(
-        [ngspice, "-s"],
-        stdin  = subprocess.PIPE,
-        stdout = subprocess.PIPE,
-        stderr = subprocess.PIPE,
-    )
-    stdout_bytes, stderr_bytes = process.communicate(
-        input=netlist.encode("utf-8"), timeout=60
-    )
-    stderr_text = stderr_bytes.decode("utf-8", errors="replace")
 
-    # ── Extract number_of_points from stderr ──────────────────────────────────
-    # ngspice server mode outputs  "@@@ <something> <number_of_points>"
-    # e.g.  "@@@ 149 701"
-    number_of_points = None
-    for line in stderr_text.splitlines():
-        line = line.strip()
-        if line.startswith("@@@"):
-            parts = line.split()
-            if len(parts) >= 3:
-                try:
-                    number_of_points = int(parts[-1])
-                    break
-                except ValueError:
-                    pass
+    with tempfile.TemporaryDirectory() as tmp:
+        cir_path = os.path.join(tmp, "filter.cir")
+        raw_path = os.path.join(tmp, "filter.raw")
 
-    # Fallback: also accept "N points" style (older ngspice versions)
-    if number_of_points is None:
-        m = re.search(r"(\d+)\s+point", stderr_text, re.IGNORECASE)
-        if m:
-            number_of_points = int(m.group(1))
+        # Inject a .control block that runs, saves raw, and quits.
+        # Insert before .end so the netlist remains valid.
+        control = (
+            "\n.control\n"
+            "run\n"
+            f"write {raw_path}\n"
+            "quit\n"
+            ".endc\n"
+        )
+        nl_lower = netlist.lower()
+        if ".end" in nl_lower:
+            insert_pos = nl_lower.rfind(".end")
+            cir_text = netlist[:insert_pos] + control + netlist[insert_pos:]
+        else:
+            cir_text = netlist + control
 
-    if number_of_points is None:
-        raise NameError(
-            "ngspice did not report the number of points.\n"
-            f"ngspice stderr:\n{stderr_text}"
+        with open(cir_path, "w") as f:
+            f.write(cir_text)
+
+        # Run ngspice in batch mode (-b) — reads from file, no stdin issues
+        result = subprocess.run(
+            [ngspice, "-b", "-o", os.path.join(tmp, "ngspice.log"), cir_path],
+            capture_output=True, timeout=60,
         )
 
-    # ── Strip preamble and filter unexpected header lines ────────────────────
-    # ngspice may emit extra lines (warnings, gmin notes, trtol messages)
-    # before and inside the raw header. PySpice's NgRawFile parser is strict
-    # and sequential, so we must keep only the lines it expects.
-    circuit_marker = b"Circuit:"
-    binary_marker  = b"Binary:"
-    idx = stdout_bytes.find(circuit_marker)
-    if idx < 0:
-        raise RuntimeError(
-            "Could not find 'Circuit:' header in ngspice output.\n"
-            f"ngspice stderr:\n{stderr_text}\n"
-            f"stdout (first 500 bytes): {stdout_bytes[:500]}"
+        if not os.path.exists(raw_path):
+            log = ""
+            log_path = os.path.join(tmp, "ngspice.log")
+            if os.path.exists(log_path):
+                with open(log_path) as lf:
+                    log = lf.read()
+            stderr = result.stderr.decode("utf-8", errors="replace")
+            raise RuntimeError(
+                "ngspice did not produce a .raw file.\n"
+                f"stderr:\n{stderr}\nlog:\n{log}"
+            )
+
+        # ── Parse the raw file directly — no PySpice parser ─────────────────
+        # ngspice -b writes a standard SPICE3 raw file (ASCII header + binary
+        # data). We parse it ourselves to avoid PySpice version fragility.
+        with open(raw_path, "rb") as f:
+            raw_bytes = f.read()
+
+        # ── Split header from binary data ─────────────────────────────────────
+        for marker in (b"Binary:\n", b"Binary:\r\n", b"Values:\n"):
+            split = raw_bytes.find(marker)
+            if split >= 0:
+                header_text = raw_bytes[:split].decode("utf-8", errors="replace")
+                binary_data = raw_bytes[split + len(marker):]
+                is_complex  = "complex" in header_text.lower()
+                break
+        else:
+            raise RuntimeError(
+                "Could not find 'Binary:' marker in ngspice raw file.\n"
+                f"Raw file first 500 bytes: {raw_bytes[:500]}"
+            )
+
+        # ── Parse header fields ───────────────────────────────────────────────
+        n_vars   = None
+        n_points = None
+        var_names = []      # ordered list of variable names
+
+        for line in header_text.splitlines():
+            line = line.strip()
+            low  = line.lower()
+            if low.startswith("no. variables:"):
+                n_vars = int(line.split(":", 1)[1].strip())
+            elif low.startswith("no. points:"):
+                n_points = int(line.split(":", 1)[1].strip())
+            elif re.match(r"^\d+\s+\S+", line):
+                # Variable table row: "0  frequency  frequency  ..."
+                parts = line.split()
+                var_names.append(parts[1].lower())
+
+        if n_vars is None or n_points is None:
+            raise RuntimeError(
+                f"Could not parse raw file header (n_vars={n_vars}, "
+                f"n_points={n_points}).\nHeader:\n{header_text}"
+            )
+
+        # ── Decode binary data ────────────────────────────────────────────────
+        # Each point: n_vars complex64 values (2×float64 = 16 bytes each)
+        # or n_vars float64 values (8 bytes each) for real data.
+        if is_complex:
+            expected = n_vars * n_points * 2   # re + im per variable per point
+            raw_arr  = np.frombuffer(binary_data,
+                                     count=expected, dtype="<f8")
+            raw_arr  = raw_arr.reshape((n_points, n_vars, 2))
+            data     = raw_arr[:, :, 0] + 1j * raw_arr[:, :, 1]  # (points, vars)
+        else:
+            expected = n_vars * n_points
+            raw_arr  = np.frombuffer(binary_data,
+                                     count=expected, dtype="<f8")
+            data     = raw_arr.reshape((n_points, n_vars))        # (points, vars)
+
+        # data[:, i] = time series for variable i
+        # ── Extract frequency and output voltage ──────────────────────────────
+        try:
+            freq_idx = var_names.index("frequency")
+        except ValueError:
+            raise RuntimeError(
+                f"'frequency' not found in variables: {var_names}"
+            )
+        frequencies = np.real(data[:, freq_idx]).astype(float)
+
+        # Find output node — try exact match and v(node) form
+        out_idx = None
+        for candidate in (probe_node.lower(), f"v({probe_node.lower()})"):
+            if candidate in var_names:
+                out_idx = var_names.index(candidate)
+                break
+
+        if out_idx is None:
+            raise KeyError(
+                f"Node '{probe_node}' not found.\nAvailable: {var_names}"
+            )
+
+        v_out        = data[:, out_idx]
+        magnitude_db = 20.0 * np.log10(np.abs(v_out) + 1e-300)
+        phase_deg    = np.degrees(np.unwrap(np.angle(v_out)))
+
+        return SimulationResult(
+            frequencies  = frequencies,
+            magnitude_db = magnitude_db,
+            phase_deg    = phase_deg,
         )
-
-    # Split into header text and binary data
-    binary_idx   = stdout_bytes.find(binary_marker, idx)
-    header_bytes = stdout_bytes[idx:binary_idx]
-    binary_bytes = stdout_bytes[binary_idx:]
-
-    # Keep only lines that NgRawFile expects — filter everything else out
-    _EXPECTED = (
-        b"Circuit:", b"Doing analysis at TEMP", b"Warning",
-        b"Title:", b"Date:", b"Plotname:", b"Flags:",
-        b"No. Variables:", b"No. Points:", b"Variables:",
-        b"No. of Data Columns",
-    )
-    filtered_lines = []
-    in_variables_section = False
-    for line in header_bytes.splitlines(keepends=True):
-        stripped = line.strip()
-        if stripped.startswith(b"No. of Data Columns") or \
-           stripped.startswith(b"Variables:"):
-            in_variables_section = True
-        if in_variables_section or any(stripped.startswith(e) for e in _EXPECTED):
-            filtered_lines.append(line)
-        # Variable table rows start with whitespace + index number
-        elif in_variables_section and (stripped[:1].isdigit() or line[:1] == b'\t'):
-            filtered_lines.append(line)
-
-    clean_stdout = b"".join(filtered_lines) + binary_bytes
-
-    # ── Monkey-patch PySpice for NumPy 2.x compatibility ─────────────────────
-    # PySpice 1.5 uses np.fromstring (removed in NumPy 2.x); patch it once.
-    from PySpice.Spice.RawFile import RawFileAbc
-    if not getattr(RawFileAbc, '_numpy2_patched', False):
-        def _read_variable_data_patched(self, raw_data):
-            if self.flags == 'real':
-                number_of_columns = self.number_of_variables
-            elif self.flags == 'complex':
-                number_of_columns = 2 * self.number_of_variables
-            else:
-                raise NotImplementedError
-            input_data = np.frombuffer(raw_data,
-                                       count=number_of_columns * self.number_of_points,
-                                       dtype='f8')
-            input_data = input_data.reshape((self.number_of_points, number_of_columns))
-            input_data = input_data.transpose()
-            if self.flags == 'complex':
-                raw_d = input_data
-                input_data = np.array(raw_d[0::2], dtype='complex128')
-                input_data.imag = raw_d[1::2]
-            for variable in self.variables.values():
-                variable.data = input_data[variable.index]
-
-        RawFileAbc._read_variable_data = _read_variable_data_patched
-        RawFileAbc._numpy2_patched = True
-
-    # ── Parse the raw output ──────────────────────────────────────────────────
-    raw = NgRawFile(clean_stdout, number_of_points)
-
-    # ── Extract results directly from raw.variables ───────────────────────────
-    # to_analysis() requires a Circuit object we don't have, so we read
-    # the parsed variable data directly instead.
-
-    # Frequency axis — always stored as variable named 'frequency'
-    freq_var = raw.variables.get('frequency')
-    if freq_var is None:
-        available = list(raw.variables.keys())
-        raise RuntimeError(
-            f"'frequency' variable not found in raw output.\n"
-            f"Available variables: {available}"
-        )
-    frequencies = np.real(np.array(freq_var.data)).astype(float)
-
-    # Output voltage — node names are lower-case in the raw file
-    v_out = None
-    for name, var in raw.variables.items():
-        if name.lower() in (probe_node.lower(), f"v({probe_node.lower()})"):
-            v_out = np.array(var.data)
-            break
-
-    if v_out is None:
-        available = list(raw.variables.keys())
-        raise KeyError(
-            f"Node '{probe_node}' not found in simulation results.\n"
-            f"Available nodes: {available}"
-        )
-
-    magnitude_db = 20.0 * np.log10(np.abs(v_out) + 1e-300)
-    phase_deg    = np.degrees(np.unwrap(np.angle(v_out)))
-
-    return SimulationResult(
-        frequencies  = frequencies,
-        magnitude_db = magnitude_db,
-        phase_deg    = phase_deg,
-    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

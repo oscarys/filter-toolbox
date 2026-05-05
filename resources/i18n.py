@@ -39,7 +39,7 @@ STRINGS = {
         "btn_export_report":    "Export Report",
         "btn_theme":            "☀ Light / Dark",
         "btn_reset_zoom":       "⊙ Reset Zoom",
-        "chk_show_sos":         "Show SOS stages",
+        "chk_show_sos":         "Show filter stages",
 
         # Group boxes
         "gb_approx":            "Approximation & Type",
@@ -179,7 +179,7 @@ STRINGS = {
         "btn_export_report":    "Exportar Reporte",
         "btn_theme":            "☀ Claro / Oscuro",
         "btn_reset_zoom":       "⊙ Reset Zoom",
-        "chk_show_sos":         "Mostrar etapas SOS",
+        "chk_show_sos":         "Mostrar etapas del filtro",
 
         # Group boxes
         "gb_approx":            "Aproximación y Tipo",

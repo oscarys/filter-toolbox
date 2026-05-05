@@ -410,6 +410,13 @@ class MainWindow(QMainWindow):
             pw.setBackground(bg)
             pw.getAxis("bottom").setPen(fg)
             pw.getAxis("left").setPen(fg)
+            # Update legend styling if it exists
+            if pw.plotItem.legend:
+                pw.plotItem.legend.setLabelTextColor(
+                    pg.mkColor("#ffffff") if self._dark_mode else pg.mkColor("#1e2230"))
+                brush = pg.mkBrush(30, 30, 40, 180) if self._dark_mode \
+                        else pg.mkBrush(240, 243, 249, 200)
+                pw.plotItem.legend.setBrush(brush)
 
     def _on_toggle_theme(self) -> None:
         self._dark_mode = not self._dark_mode
@@ -555,7 +562,17 @@ class MainWindow(QMainWindow):
         self._plot_gd.plot(freqs, gd,     pen=self._THEORY_PEN, name=name)
         for pw in (self._plot_mag, self._plot_phase, self._plot_gd):
             if not pw.plotItem.legend:
-                pw.addLegend()
+                legend = pw.addLegend(
+                    offset      = (10, 10),
+                    labelTextSize = "10pt",
+                )
+                legend.setLabelTextColor(pg.mkColor("#ffffff") if self._dark_mode
+                                         else pg.mkColor("#1e2230"))
+                # Semi-transparent dark/light background
+                brush = pg.mkBrush(30, 30, 40, 180) if self._dark_mode \
+                        else pg.mkBrush(240, 243, 249, 200)
+                legend.setBrush(brush)
+                legend.setPen(pg.mkPen("#4d94ff", width=1))
 
     def _plot_simulated(self, result: SimulationResult) -> None:
         # Remove previous SPICE overlay curves before adding new ones
@@ -577,7 +594,7 @@ class MainWindow(QMainWindow):
         )
 
     def _plot_sos_responses(self, biquads, f_start: float, f_stop: float) -> None:
-        """Overlay individual SOS stage responses as thin solid lines with alpha."""
+        """Overlay individual stage responses as thin solid lines with alpha."""
         palette = [
             "#a0c4ff", "#b9fbc0", "#ffd6a5", "#ffadad",
             "#caffbf", "#fdffb6", "#c77dff", "#f4acb7",
@@ -588,9 +605,11 @@ class MainWindow(QMainWindow):
                     bq, f_start=f_start, f_stop=f_stop)
                 color = pg.mkColor(palette[i % len(palette)])
                 color.setAlpha(180)
+                # Label as "Stage N [type]" — more informative than "SOS N"
+                label = f"Stage {i + 1} [{bq.section_type.value}]"
                 self._plot_mag.plot(freqs, mag,
                                     pen=pg.mkPen(color, width=1.2),
-                                    name=f"SOS {i + 1}")
+                                    name=label)
             except Exception:
                 pass
 
