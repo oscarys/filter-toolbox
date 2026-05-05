@@ -893,7 +893,9 @@ def synthesise_tow_thomas(
     # Valores internos/fijos del UAF42 usados en el análisis:
     # R1 = R2 = R4 = R = 50kΩ
     # y se elige RG = RQ = R
+    # los capacitores de las secciones de segundo orden son fijos a 1000pF
     R_INTERNAL = 50e3
+    C_INTERNAL = 1000e-12
     C = c_base
 
     for stage_idx, biquad in enumerate(biquads):
@@ -1005,8 +1007,8 @@ def synthesise_tow_thomas(
             # Ecuaciones correctas con RG = RQ = R:
             # ω0/Q = 3/(2 C RF1)
             # ω0²  = 1/(C² RF1 RF2)
-            RF1 = (3.0 * Q) / (2.0 * C * omega_0)
-            RF2 = 2.0 / (3.0 * Q * C * omega_0)
+            RF1 = (3.0 * Q) / (2.0 * C_INTERNAL * omega_0)
+            RF2 = 2.0 / (3.0 * Q * C_INTERNAL * omega_0)
 
             RG = R_INTERNAL
             RQ = R_INTERNAL
