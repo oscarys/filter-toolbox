@@ -260,7 +260,7 @@ def compute_minimum_order(spec: FilterSpec) -> int:
     # Guardia: si el cociente es ≤ 1 las specs son inválidas
     # (puede ocurrir en la llamada inicial de la GUI con valores default)
     if omega_ratio <= 1.0:
-        print(f'debug (oscar): orden del filtro inválido (Ωs={omega_ratio:.3f} ≤ 1), retornando 1')
+        print(f'(debug): orden del filtro inválido (Ωs={omega_ratio:.3f} ≤ 1), retornando 1')
         return 1
 
     # Calcula especificación
@@ -279,7 +279,7 @@ def compute_minimum_order(spec: FilterSpec) -> int:
         
     # Regresa el orden del filtro
 
-    print(f'debug (oscar): orden del filtro {n}')
+    print(f'(debug): orden del filtro {n}')
 
     return n
 
@@ -393,25 +393,25 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
 
     match spec.filter_type : 
         case FilterType.LOWPASS: 
-            print(f'debug (oscar): lp frec desnormalización: {omega_c/(2*np.pi)} Hz')
+            print(f'(debug): lp frec desnormalización: {omega_c/(2*np.pi)} Hz')
             z, p, k = sps.lp2lp_zpk(z, p, k, wo=omega_c)
 
         case FilterType.HIGHPASS:
-            print(f'debug (oscar): hp frec desnormalización: {omega_c/(2*np.pi)} Hz')
+            print(f'(debug): hp frec desnormalización: {omega_c/(2*np.pi)} Hz')
             z, p, k = sps.lp2hp_zpk(z, p, k, wo=omega_c)
 
         case FilterType.BANDPASS:
             omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
             BW      = spec.omega_p2 - spec.omega_p
-            print(f'debug (oscar): bp frec desnormalización: {omega_0/(2*np.pi)} Hz')
-            print(f'debug (oscar): bp bandwidth: {BW/(2*np.pi)} Hz')
+            print(f'(debug): bp frec desnormalización: {omega_0/(2*np.pi)} Hz')
+            print(f'(debug): bp bandwidth: {BW/(2*np.pi)} Hz')
             z, p, k = sps.lp2bp_zpk(z, p, k, wo=omega_0, bw=BW)
 
         case FilterType.BANDSTOP:
             omega_0 = np.sqrt(spec.omega_p * spec.omega_p2)
             BW      = spec.omega_p2 - spec.omega_p
-            print(f'debug (oscar): bs frec desnormalización: {omega_0/(2*np.pi)} Hz')
-            print(f'debug (oscar): bs bandwidth: {BW/(2*np.pi)} Hz')
+            print(f'(debug): bs frec desnormalización: {omega_0/(2*np.pi)} Hz')
+            print(f'(debug): bs bandwidth: {BW/(2*np.pi)} Hz')
             z, p, k = sps.lp2bs_zpk(z, p, k, wo=omega_0, bw=BW)
 
     # Calcula los polinomios de la función de transferencia
@@ -433,8 +433,8 @@ def compute_transfer_function(spec: FilterSpec) -> tuple[TransferFunction, int]:
         filter_type = spec.filter_type,   # carry spec context into TF
     )
 
-    print(f'debug (oscar): num: {tf.numerator}')
-    print(f'debug (oscar): den: {tf.denominator}')
+    print(f'(debug): num: {tf.numerator}')
+    print(f'(debug): den: {tf.denominator}')
 
     # Regresa el objeto función de transferencia y el orden
     return (tf, n)
@@ -538,22 +538,49 @@ def factored_biquads(tf: TransferFunction) -> list[TransferFunction]:
     Use scipy.signal.tf2sos then convert each row back to a TransferFunction.
     Apply Q-ordered pairing and output-ordering optimisation.
     """
-     
-    # Factoriza en secciones analógicas de primer y segundo orden 
-    sos = sps.tf2sos(tf.numerator, tf.denominator, analog=True)
-
-    # Genera los objetos TransferFunction para cada seccion,
-    # clasificando cada una y propagando el filter_type global.
+    # Arreglo de secciones
     sections = []
-    for row in sos:
-        num, den = row[:3], row[3:]
-        sec = TransferFunction(
-            numerator   = num,
-            denominator = den,
-            section_type = _classify_section(num, den),
-            filter_type  = tf.filter_type,   # carry global context down
-        )
-        sections.append(sec)
+    # Calcula los ceros y los polos, ordenados por pares conjugados
+    z = np.sort_complex(np.roots(tf.numerator))
+    p = np.sort_complex(np.roots(tf.denominator))
+    # Calcula el orden del filtro
+    n = tf.denominator.shape[0] - 1
+    # Genera las secciones segun n y tipo de filtro
+    match tf.filter_type:
+        case FilterType.LOWPASS:
+            scale = tf.numerator[-1]**(1/n)
+            if n%2:
+                # Sección de primer orden
+                seccion = TransferFunction(
+                    numerator = np.real(np.array([scale])),
+                    denominator = np.real(np.array([1, -p[0]])),
+                    section_type = SectionType.LOWPASS_1,
+                    filter_type  = tf.filter_type)
+                sections.append(seccion)
+                p = p[1:]
+            for i in range(0,p.shape[0],2):
+                # Sección de primer orden
+                seccion = TransferFunction(
+                    numerator = np.real(np.array([scale**2])),
+                    denominator = np.real(np.poly(p[i:i+2])),
+                    section_type = SectionType.LOWPASS_2,
+                    filter_type  = tf.filter_type)
+                sections.append(seccion)
+        case _:
+            # Factoriza en secciones de segundo orden
+            sos = sps.tf2sos(tf.numerator, tf.denominator, pairing='minimal', analog=True)
+            # Genera los objetos TransferFunction para cada seccion,
+            # clasificando cada una y propagando el filter_type global.
+            sections = []
+            for row in sos:
+                num, den = row[:3], row[3:]
+                sec = TransferFunction(
+                    numerator   = num,
+                    denominator = den,
+                    section_type = _classify_section(num, den),
+                    filter_type  = tf.filter_type,   # carry global context down
+                )
+                sections.append(sec)
 
     # ----- Q-ordering (inline) -----
     def compute_Q(section):
@@ -568,9 +595,10 @@ def factored_biquads(tf: TransferFunction) -> list[TransferFunction]:
     sections = sorted(sections, key=compute_Q)
 
     for i, s in enumerate(sections):
-        print(f"debug biquad {i+1}: section_type={s.section_type.value}  "
-              f"filter_type={s.filter_type.name}  "
-              f"num={np.round(s.numerator,4)}  den={np.round(s.denominator,4)}")
+        print(f'(debug) S{i+1}: {s.section_type}')
+        print(f'                  {s.filter_type}')
+        print(f'                  num: {s.numerator}')
+        print(f'                  den: {s.denominator}')
 
     return sections
 
