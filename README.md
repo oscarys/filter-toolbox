@@ -53,7 +53,7 @@ filter-toolbox/
 
 ```bash
 # 1. Clone
-git clone https://github.com/<org>/filter-toolbox.git
+git clone https://github.com/oscarys/filter-toolbox.git
 cd filter-toolbox
 
 # 2. Create virtual environment
